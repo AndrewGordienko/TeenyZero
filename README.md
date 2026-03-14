@@ -5,6 +5,7 @@
 </picture>
 
 ### teenyzero: Modeling attack geometry for abductive search.
+*Preparing for a Summer 2026 Research Internship*
 </div>
 
 ---
