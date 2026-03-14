@@ -1,7 +1,7 @@
 <div align="center">
 
 <picture>
-  <img alt="teenyzero logo" src="/docs/logo.svg" width="40%" height="40%">
+  <img alt="teenyzero logo" src="/docs/logo.png" width="40%" height="40%">
 </picture>
 
 ### teenyzero: Modeling attack geometry for abductive search.
