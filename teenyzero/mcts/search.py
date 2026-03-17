@@ -114,7 +114,7 @@ class MCTS:
         return root.children.get(move)
 
     def _finalize_root(self, root: MCTSNode):
-        total_visits = sum(root.N.values())
+        total_visits = float(root.total_n)
 
         if total_visits <= 0:
             if not root.P:
@@ -130,7 +130,7 @@ class MCTS:
         if not root.P:
             return
 
-        if sum(root.N.values()) > 0:
+        if getattr(root, "dirichlet_applied", False):
             return
 
         import numpy as np
@@ -143,6 +143,8 @@ class MCTS:
         for i, move in enumerate(moves):
             root.P[move] = (1.0 - eps) * root.P[move] + eps * float(noise[i])
 
+        root.dirichlet_applied = True
+
     def _select_to_leaf(self, root_board: chess.Board, root: MCTSNode):
         """
         Runs selection only, stopping at a leaf.
@@ -150,7 +152,7 @@ class MCTS:
         """
         node = root
         path = []
-        board = root_board.copy(stack=False)
+        board = root_board.copy(stack=getattr(self.evaluator, "requires_history", False))
 
         while True:
             with self.tree_lock:
@@ -163,6 +165,8 @@ class MCTS:
                 if self.v_loss != 0.0:
                     node.N[move] += self.v_loss
                     node.W[move] -= self.v_loss
+                    node.total_n += self.v_loss
+                    node.total_w -= self.v_loss
 
                 child = node.children.get(move)
 
@@ -232,9 +236,13 @@ class MCTS:
                 if self.v_loss != 0.0:
                     n.N[m] = n.N[m] - self.v_loss + 1
                     n.W[m] = n.W[m] + self.v_loss + value
+                    n.total_n = n.total_n - self.v_loss + 1
+                    n.total_w = n.total_w + self.v_loss + value
                 else:
                     n.N[m] += 1
                     n.W[m] += value
+                    n.total_n += 1
+                    n.total_w += value
                 value = -value
 
     def _select_child(self, node: MCTSNode):
@@ -244,17 +252,10 @@ class MCTS:
         if not node.P:
             return None
 
-        total_n = sum(node.N.values())
+        total_n = node.total_n
         total_n_sqrt = math.sqrt(total_n + 1.0)
-
-        parent_q = 0.0
-        explored = 0
-        for move in node.P:
-            n = node.N[move]
-            if n > 0:
-                parent_q += node.W[move] / n
-                explored += 1
-        parent_q = (parent_q / explored) if explored > 0 else 0.0
+        # Weighted parent mean is cheaper to maintain than re-averaging explored edges.
+        parent_q = (node.total_w / total_n) if total_n > 0 else 0.0
 
         fpu_value = parent_q - self.params["FPU_REDUCTION"]
 

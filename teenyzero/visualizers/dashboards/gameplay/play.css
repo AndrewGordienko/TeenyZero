@@ -1,0 +1,72 @@
+.play-layout {
+    display: flex;
+    gap: 36px;
+    align-items: flex-start;
+}
+
+.board-panel {
+    width: min(100%, 520px);
+}
+
+#board {
+    width: 100%;
+    max-width: 520px;
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.10));
+}
+
+.side-panel {
+    width: min(100%, 320px);
+}
+
+.control-group + .control-group {
+    margin-top: 28px;
+}
+
+select,
+button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--line-strong);
+    font-size: 13px;
+    background: #ffffff;
+    outline: none;
+    font-family: inherit;
+}
+
+button.action-button {
+    margin-top: 28px;
+}
+
+.stats-list {
+    border-top: 1px solid var(--line);
+}
+
+.stats-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.stats-row span {
+    color: var(--text);
+    font-weight: 700;
+}
+
+@media (max-width: 900px) {
+    .play-layout {
+        flex-direction: column;
+    }
+
+    .board-panel,
+    .side-panel {
+        width: 100%;
+        max-width: 520px;
+    }
+}
+

@@ -3,6 +3,17 @@ import time
 import torch
 import numpy as np
 
+from teenyzero.alphazero.config import (
+    AUX_PLANES,
+    INPUT_HISTORY_LENGTH,
+    INPUT_PLANES,
+    PIECE_PLANES_PER_POSITION,
+)
+from teenyzero.alphazero.runtime import get_runtime_profile
+
+
+PROFILE = get_runtime_profile()
+
 
 class AlphaZeroEvaluator:
     def __init__(
@@ -25,14 +36,29 @@ class AlphaZeroEvaluator:
         self.worker_id = worker_id
         self.batch_mode = task_queue is not None and response_queue is not None
         self.use_cache = use_cache
+        self.history_length = INPUT_HISTORY_LENGTH
+        self.requires_history = self.history_length > 1
         self.cache = {}
         self.encoded_cache = {}
         self.legal_move_cache = {}
         self.pending_results = {}
         self.request_counter = 0
+        if self.device == "cuda" and PROFILE.inference_precision == "bf16":
+            self.inference_dtype = torch.bfloat16
+        else:
+            self.inference_dtype = torch.float16 if device in {"mps", "cuda"} else torch.float32
+        self.use_channels_last = device in {"mps", "cuda"}
+        if self.device == "cuda":
+            if hasattr(torch, "set_float32_matmul_precision"):
+                torch.set_float32_matmul_precision("high")
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
 
         if self.model is not None:
-            self.model.to(self.device)
+            self.model.to(device=self.device, dtype=self.inference_dtype)
+            if self.use_channels_last:
+                self.model.to(memory_format=torch.channels_last)
             self.model.eval()
 
         self._dir_map = self._build_direction_map()
@@ -144,10 +170,15 @@ class AlphaZeroEvaluator:
         return results
 
     def _evaluate_local(self, encoded_state, board: chess.Board):
-        tensor = torch.from_numpy(encoded_state).float().unsqueeze(0).to(self.device)
+        tensor = torch.from_numpy(encoded_state).unsqueeze(0).to(
+            device=self.device,
+            dtype=self.inference_dtype,
+        )
+        if self.use_channels_last:
+            tensor = tensor.contiguous(memory_format=torch.channels_last)
 
         forward_start = time.perf_counter()
-        with torch.no_grad():
+        with torch.inference_mode():
             policy_logits, value = self.model(tensor)
         self.profile["inference_forward_ms"] += (time.perf_counter() - forward_start) * 1000.0
         self.profile["single_requests"] += 1
@@ -157,10 +188,15 @@ class AlphaZeroEvaluator:
         return self._mask_and_normalize_logits(logits, board, v)
 
     def _evaluate_many_local(self, encoded_states, boards):
-        tensor = torch.from_numpy(np.asarray(encoded_states, dtype=np.float32)).to(self.device)
+        tensor = torch.from_numpy(np.asarray(encoded_states, dtype=np.float32)).to(
+            device=self.device,
+            dtype=self.inference_dtype,
+        )
+        if self.use_channels_last:
+            tensor = tensor.contiguous(memory_format=torch.channels_last)
 
         forward_start = time.perf_counter()
-        with torch.no_grad():
+        with torch.inference_mode():
             policy_logits, values = self.model(tensor)
         self.profile["inference_forward_ms"] += (time.perf_counter() - forward_start) * 1000.0
         self.profile["batch_requests"] += 1
@@ -240,48 +276,75 @@ class AlphaZeroEvaluator:
         legal_moves, legal_indices = self._get_legal_moves_and_indices(board)
         if not legal_moves:
             self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-            return {}, v
+            return {}, float(np.clip(np.nan_to_num(v, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0))
 
         legal_logits = np.asarray(logits[legal_indices], dtype=np.float32)
+        safe_value = float(np.clip(np.nan_to_num(v, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0))
+        if not np.isfinite(legal_logits).all():
+            uniform = 1.0 / len(legal_moves)
+            self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
+            return {move: uniform for move in legal_moves}, safe_value
+
         max_logit = float(np.max(legal_logits))
         exp_vals = np.exp(legal_logits - max_logit).astype(np.float32, copy=False)
         total = float(np.sum(exp_vals))
 
-        if total <= 0.0:
+        if not np.isfinite(total) or total <= 0.0:
             uniform = 1.0 / len(legal_moves)
             self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-            return {move: uniform for move in legal_moves}, v
+            return {move: uniform for move in legal_moves}, safe_value
 
         inv_total = 1.0 / total
         self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
         return {
             move: float(prob)
             for move, prob in zip(legal_moves, exp_vals * inv_total)
-        }, v
+        }, safe_value
 
     def encode_board(self, board: chess.Board):
-        """
-        13 x 8 x 8
-        0-5: white P N B R Q K
-        6-11: black p n b r q k
-        12: side to move plane
-        """
-        planes = np.zeros((13, 8, 8), dtype=np.float32)
+        planes = np.zeros((INPUT_PLANES, 8, 8), dtype=np.float32)
+        perspective = board.turn
 
-        for square, piece in board.piece_map().items():
-            rank = square // 8
-            file = square % 8
+        history_boards = []
+        scratch = board.copy(stack=True)
+        history_boards.append(scratch.copy(stack=False))
+        for _ in range(1, self.history_length):
+            if not scratch.move_stack:
+                break
+            scratch.pop()
+            history_boards.append(scratch.copy(stack=False))
 
-            plane = piece.piece_type - 1
-            if piece.color == chess.BLACK:
-                plane += 6
+        for history_idx, history_board in enumerate(history_boards):
+            offset = history_idx * PIECE_PLANES_PER_POSITION
+            self._fill_piece_planes(planes, offset, history_board, perspective)
 
-            planes[plane, rank, file] = 1.0
-
-        if board.turn == chess.WHITE:
-            planes[12, :, :] = 1.0
-
+        aux_offset = self.history_length * PIECE_PLANES_PER_POSITION
+        self._fill_aux_planes(planes, aux_offset, board, perspective)
         return planes
+
+    def _fill_piece_planes(self, planes, offset, board: chess.Board, perspective: bool):
+        for square, piece in board.piece_map().items():
+            oriented_square = self._orient_square(square, perspective)
+            rank = chess.square_rank(oriented_square)
+            file = chess.square_file(oriented_square)
+            plane = piece.piece_type - 1
+            if piece.color != perspective:
+                plane += 6
+            planes[offset + plane, rank, file] = 1.0
+
+    def _fill_aux_planes(self, planes, offset, board: chess.Board, perspective: bool):
+        planes[offset, :, :] = 1.0
+        planes[offset + 1, :, :] = 1.0 if board.has_kingside_castling_rights(perspective) else 0.0
+        planes[offset + 2, :, :] = 1.0 if board.has_queenside_castling_rights(perspective) else 0.0
+        planes[offset + 3, :, :] = 1.0 if board.has_kingside_castling_rights(not perspective) else 0.0
+        planes[offset + 4, :, :] = 1.0 if board.has_queenside_castling_rights(not perspective) else 0.0
+        planes[offset + 5, :, :] = min(board.halfmove_clock, 100) / 100.0
+        planes[offset + 6, :, :] = min(board.fullmove_number, 200) / 200.0
+        repetition = 1.0 if board.is_repetition(2) else 0.0
+        planes[offset + 7, :, :] = repetition
+
+    def _orient_square(self, square, perspective: bool):
+        return square if perspective == chess.WHITE else chess.square_mirror(square)
 
     def move_to_idx(self, move: chess.Move, turn: bool):
         """
@@ -363,18 +426,18 @@ class AlphaZeroEvaluator:
 
     def _position_key(self, board: chess.Board):
         ep = chess.square_name(board.ep_square) if board.ep_square is not None else "-"
+        history = tuple(move.uci() for move in board.move_stack[-(self.history_length - 1):])
         return (
             board.board_fen(),
             board.turn,
             board.castling_rights,
             ep,
+            board.halfmove_clock,
+            history,
         )
 
     def _cache_key(self, board: chess.Board):
-        return self._position_key(board) + (
-            board.halfmove_clock,
-            board.fullmove_number,
-        )
+        return self._position_key(board) + (board.fullmove_number,)
 
     def _empty_profile(self):
         return {

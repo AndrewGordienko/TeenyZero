@@ -2,6 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from teenyzero.alphazero.config import (
+    INPUT_PLANES,
+    MODEL_CHANNELS,
+    MODEL_RES_BLOCKS,
+    POLICY_HEAD_CHANNELS,
+    VALUE_HEAD_HIDDEN,
+)
+
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
@@ -18,47 +26,49 @@ class ResidualBlock(nn.Module):
         return F.relu(out)
 
 class AlphaNet(nn.Module):
-    def __init__(self, num_res_blocks=10, channels=128):
+    def __init__(
+        self,
+        input_planes=INPUT_PLANES,
+        num_res_blocks=MODEL_RES_BLOCKS,
+        channels=MODEL_CHANNELS,
+        policy_head_channels=POLICY_HEAD_CHANNELS,
+        value_hidden=VALUE_HEAD_HIDDEN,
+    ):
         super().__init__()
-        
-        # FIX 1: Set in_channels to 13 (6 white pieces, 6 black, 1 turn)
-        self.conv_in = nn.Conv2d(13, channels, kernel_size=3, padding=1)
+
+        self.input_planes = input_planes
+        self.num_res_blocks = num_res_blocks
+        self.channels = channels
+
+        self.conv_in = nn.Conv2d(input_planes, channels, kernel_size=3, padding=1)
         self.bn_in = nn.BatchNorm2d(channels)
-        
+
         self.res_blocks = nn.ModuleList([ResidualBlock(channels) for _ in range(num_res_blocks)])
-        
-        # Policy Head
-        self.pol_conv = nn.Conv2d(channels, 32, kernel_size=1)
-        self.pol_bn = nn.BatchNorm2d(32)
-        
-        # FIX 2: Set output to 4672 (AlphaZero move planes: 64 squares * 73 directions)
-        self.pol_fc = nn.Linear(32 * 8 * 8, 4672) 
-        
-        # Value Head
+
+        self.pol_conv = nn.Conv2d(channels, policy_head_channels, kernel_size=1)
+        self.pol_bn = nn.BatchNorm2d(policy_head_channels)
+        self.pol_fc = nn.Linear(policy_head_channels * 8 * 8, 4672)
+
         self.val_conv = nn.Conv2d(channels, 1, kernel_size=1)
         self.val_bn = nn.BatchNorm2d(1)
-        self.val_fc1 = nn.Linear(1 * 8 * 8, 128)
-        self.val_fc2 = nn.Linear(128, 1)
+        self.val_fc1 = nn.Linear(1 * 8 * 8, value_hidden)
+        self.val_fc2 = nn.Linear(value_hidden, 1)
 
-        # Zero-init the final value layer to start at a 50/50 win probability
         nn.init.zeros_(self.val_fc2.weight)
         nn.init.zeros_(self.val_fc2.bias)
 
     def forward(self, x):
-        # x shape: (batch, 13, 8, 8)
         x = F.relu(self.bn_in(self.conv_in(x)))
         for block in self.res_blocks:
             x = block(x)
-        
-        # Policy Head
+
         p = F.relu(self.pol_bn(self.pol_conv(x)))
         p = p.view(p.size(0), -1)
-        p = self.pol_fc(p) # Raw logits (Softmax is handled in the Evaluator)
-        
-        # Value Head
+        p = self.pol_fc(p)
+
         v = F.relu(self.val_bn(self.val_conv(x)))
         v = v.view(v.size(0), -1)
         v = F.relu(self.val_fc1(v))
-        v = torch.tanh(self.val_fc2(v)) # Output range: [-1, 1]
-        
+        v = torch.tanh(self.val_fc2(v))
+
         return p, v

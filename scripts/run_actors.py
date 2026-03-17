@@ -4,23 +4,32 @@ import torch
 import argparse
 import multiprocessing as mp
 
-from teenyzero.alphazero.model import AlphaNet
+from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, save_checkpoint
+from teenyzero.alphazero.runtime import get_runtime_profile
 from teenyzero.alphazero.servers.inference import inference_worker
 from teenyzero.alphazero.logic.collector import DataCollector
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.mcts.search import MCTS
-from teenyzero.visualizers.training_data_dashboard.dashboard import run_dashboard
+from teenyzero.visualizers.dashboards.cluster_monitor.dashboard import run_dashboard
+
+
+PROFILE = get_runtime_profile()
 
 
 def bootstrap_model(path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    if not os.path.exists(path):
+    model = build_model()
+    if os.path.exists(path):
+        load_result = load_checkpoint(model, path, map_location="cpu", allow_partial=True)
+        if load_result["loaded"]:
+            return
+        print(f"[*] Replacing unusable checkpoint at {path} ({load_result['reason']})...")
+    else:
         print(f"[*] Initializing fresh AlphaNet at {path}...")
-        model = AlphaNet(num_res_blocks=10, channels=128)
-        torch.save(model.state_dict(), path)
+    save_checkpoint(model, path)
 
 
-def worker_task(worker_id, task_queue, response_queue, shared_stats):
+def worker_task(worker_id, task_queue, response_queue, shared_stats, leaf_batch_size):
     """
     Self-play worker loop.
     """
@@ -32,12 +41,14 @@ def worker_task(worker_id, task_queue, response_queue, shared_stats):
     )
 
     mcts_params = {
-        "SIMULATIONS": 32,
-        "C_PUCT": 1.2,
+        "SIMULATIONS": PROFILE.selfplay_simulations,
+        "C_PUCT": 1.5,
+        "ALPHA": 0.3,
+        "EPS": 0.30,
         "VIRTUAL_LOSS": 0.0,
         "PARALLEL_THREADS": 1,
         "FPU_REDUCTION": 0.4,
-        "LEAF_BATCH_SIZE": 8,
+        "LEAF_BATCH_SIZE": leaf_batch_size,
     }
     engine = MCTS(evaluator=evaluator, params=mcts_params)
 
@@ -71,10 +82,12 @@ if __name__ == "__main__":
         "--workers",
         type=int,
         default=None,
-        help="Number of self-play processes (defaults to 8 on accelerator-backed runs, else 4 on CPU)",
+        help="Number of self-play processes (defaults come from the active runtime profile)",
     )
     args = parser.parse_args()
-    worker_count = args.workers if args.workers is not None else (8 if DEVICE != "cpu" else 4)
+    default_workers = PROFILE.selfplay_workers if DEVICE in {"cuda", "mps"} else 4
+    leaf_batch_size = PROFILE.selfplay_leaf_batch_size if DEVICE in {"cuda", "mps"} else 8
+    worker_count = args.workers if args.workers is not None else default_workers
 
     bootstrap_model(MODEL_PATH)
 
@@ -83,10 +96,11 @@ if __name__ == "__main__":
         shared_stats["__cluster__"] = {
             "config": {
                 "device": DEVICE,
+                "profile": PROFILE.name,
                 "workers": worker_count,
                 "model_path": MODEL_PATH,
-                "simulations": 32,
-                "leaf_batch_size": 8,
+                "simulations": PROFILE.selfplay_simulations,
+                "leaf_batch_size": leaf_batch_size,
             }
         }
 
@@ -117,7 +131,7 @@ if __name__ == "__main__":
         for i in range(worker_count):
             p = mp.Process(
                 target=worker_task,
-                args=(i, task_queue, response_queues[i], shared_stats),
+                args=(i, task_queue, response_queues[i], shared_stats, leaf_batch_size),
             )
             p.daemon = True
             p.start()

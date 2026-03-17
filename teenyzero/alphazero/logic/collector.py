@@ -3,6 +3,12 @@ import numpy as np
 import chess
 from collections import Counter, deque
 
+from teenyzero.alphazero.config import REPLAY_ENCODER_VERSION
+from teenyzero.alphazero.runtime import get_runtime_profile
+
+
+PROFILE = get_runtime_profile()
+
 
 class DataCollector:
     def __init__(self, evaluator, engine, buffer_path="data/replay_buffer"):
@@ -13,9 +19,19 @@ class DataCollector:
         os.makedirs(self.buffer_path, exist_ok=True)
 
         # Exploration / diversity controls
-        self.EXPLORATION_GAMES_THRESHOLD = 500
-        self.FORCE_RANDOM_PLIES = 2
-        self.MAX_GAME_LENGTH = 100
+        self.EXPLORATION_GAMES_THRESHOLD = 2000
+        self.FORCE_RANDOM_PLIES = 8
+        self.MAX_GAME_LENGTH = 160
+        self.TEMP_PLIES_MIN = 18
+        self.TEMP_PLIES_MAX = 30
+        self.OPENING_TEMPERATURE = 1.45
+        self.MIDGAME_TEMPERATURE = 1.18
+        self.RESIGN_AFTER_PLIES = 24
+        self.RESIGN_VALUE_THRESHOLD = -0.92
+        self.RESIGN_STREAK = 3
+        self.CAPTURED_GAME_VALUE_THRESHOLD = 0.85
+        self.CAPTURED_GAME_MATERIAL_THRESHOLD = 2.5
+        self.AVOID_DRAW_REPETITION_PLIES = 120
 
         self.total_games = 0
         self.total_samples = 0
@@ -52,13 +68,19 @@ class DataCollector:
         game_history = []
         move_count = 0
         root = None
+        resign_streak = {
+            chess.WHITE: 0,
+            chess.BLACK: 0,
+        }
+        forced_outcome = None
 
         # Early training exploration
         random_prob = max(0.0, 1.0 - (self.total_games / self.EXPLORATION_GAMES_THRESHOLD))
         is_forced_exploration = np.random.random() < random_prob
 
-        # Shorter stochastic window for faster, cleaner games
-        temp_threshold = np.random.randint(6, 12)
+        # Keep temperature active longer so self-play does not collapse into
+        # short symmetric lines that repeatedly get labeled as draws.
+        temp_threshold = np.random.randint(self.TEMP_PLIES_MIN, self.TEMP_PLIES_MAX + 1)
 
         while not board.is_game_over(claim_draw=True) and move_count < self.MAX_GAME_LENGTH:
             best_move, pi_dist, root = self.engine.search(
@@ -68,6 +90,13 @@ class DataCollector:
             )
             search_profile = self.engine.last_search_stats
             self._record_search_profile(search_profile)
+            temperature = self.OPENING_TEMPERATURE if move_count < self.FORCE_RANDOM_PLIES else self.MIDGAME_TEMPERATURE
+            current_side = board.turn
+            root_value = self._root_value(root)
+
+            if self._should_resign(current_side, root_value, move_count, resign_streak):
+                forced_outcome = -1.0 if current_side == chess.WHITE else 1.0
+                break
 
             # Failsafe
             if best_move is None:
@@ -81,13 +110,15 @@ class DataCollector:
             if is_forced_exploration and move_count < self.FORCE_RANDOM_PLIES:
                 selected_move = np.random.choice(list(board.legal_moves))
             elif move_count < temp_threshold:
-                selected_move = self._sample_from_pi(pi_dist, best_move, board)
+                selected_move = self._sample_from_pi(pi_dist, best_move, board, temperature=temperature)
             else:
                 selected_move = best_move
+            selected_move = self._avoid_draw_repetition(board, selected_move, pi_dist, best_move, move_count)
 
             # Save training example BEFORE pushing the move
             state = self.evaluator.encode_board(board)
-            pi_vector = self._dist_to_vector(pi_dist, board)
+            target_pi = self._apply_temperature(pi_dist, temperature) if move_count < temp_threshold else pi_dist
+            pi_vector = self._dist_to_vector(target_pi, board)
 
             game_history.append({
                 "state": state,
@@ -116,7 +147,7 @@ class DataCollector:
             # Reuse subtree after played move
             root = self.engine.advance_root(root, selected_move)
 
-        outcome = self._get_game_outcome(board)
+        outcome = forced_outcome if forced_outcome is not None else self._get_game_outcome(board, root=root, move_count=move_count)
         game_time_ms = (time.perf_counter() - game_start) * 1000.0
 
         final_data = []
@@ -144,22 +175,17 @@ class DataCollector:
 
         return final_data
 
-    def _sample_from_pi(self, pi_dist, fallback_move, board):
+    def _sample_from_pi(self, pi_dist, fallback_move, board, temperature=1.0):
         """
         Sample a move from the MCTS visit distribution.
         Falls back safely if the distribution is malformed.
         """
-        if not pi_dist:
+        adjusted = self._apply_temperature(pi_dist, temperature)
+        if not adjusted:
             return fallback_move
 
-        moves = list(pi_dist.keys())
-        probs = np.array([pi_dist[m] for m in moves], dtype=np.float64)
-
-        total = probs.sum()
-        if total <= 0.0:
-            return fallback_move
-
-        probs /= total
+        moves = list(adjusted.keys())
+        probs = np.array([adjusted[m] for m in moves], dtype=np.float64)
 
         try:
             return np.random.choice(moves, p=probs)
@@ -168,6 +194,28 @@ class DataCollector:
             if fallback_move in legal_moves:
                 return fallback_move
             return legal_moves[0] if legal_moves else None
+
+    def _apply_temperature(self, pi_dist, temperature=1.0):
+        if not pi_dist:
+            return {}
+
+        moves = list(pi_dist.keys())
+        probs = np.array([pi_dist[m] for m in moves], dtype=np.float64)
+        probs = np.clip(probs, 1e-12, None)
+
+        if temperature <= 1e-6:
+            greedy = np.zeros_like(probs)
+            greedy[int(np.argmax(probs))] = 1.0
+            return {move: float(prob) for move, prob in zip(moves, greedy)}
+
+        scaled = np.power(probs, 1.0 / float(temperature))
+        total = scaled.sum()
+        if total <= 0.0:
+            uniform = 1.0 / len(moves)
+            return {move: uniform for move in moves}
+
+        scaled /= total
+        return {move: float(prob) for move, prob in zip(moves, scaled)}
 
     def _uniform_pi_dist(self, legal_moves):
         if not legal_moves:
@@ -204,7 +252,70 @@ class DataCollector:
             vec[idx] = float(prob)
         return vec
 
-    def _get_game_outcome(self, board):
+    def _root_value(self, root):
+        if root is None or getattr(root, "total_n", 0.0) <= 0.0:
+            return 0.0
+        return float(root.total_w / max(root.total_n, 1.0))
+
+    def _should_resign(self, side_to_move, root_value, move_count, resign_streak):
+        if move_count < self.RESIGN_AFTER_PLIES:
+            resign_streak[side_to_move] = 0
+            return False
+
+        if root_value <= self.RESIGN_VALUE_THRESHOLD:
+            resign_streak[side_to_move] += 1
+        else:
+            resign_streak[side_to_move] = 0
+
+        return resign_streak[side_to_move] >= self.RESIGN_STREAK
+
+    def _move_creates_claimable_draw(self, board, move):
+        probe = board.copy(stack=False)
+        probe.push(move)
+        return probe.can_claim_threefold_repetition() or probe.can_claim_fifty_moves()
+
+    def _avoid_draw_repetition(self, board, selected_move, pi_dist, best_move, move_count):
+        if selected_move is None or move_count >= self.AVOID_DRAW_REPETITION_PLIES:
+            return selected_move
+        if not self._move_creates_claimable_draw(board, selected_move):
+            return selected_move
+
+        for move, _ in sorted(pi_dist.items(), key=lambda item: item[1], reverse=True)[:6]:
+            if move == selected_move:
+                continue
+            if move not in board.legal_moves:
+                continue
+            if not self._move_creates_claimable_draw(board, move):
+                return move
+
+        return best_move if best_move in board.legal_moves else selected_move
+
+    def _material_score(self, board):
+        piece_values = {
+            chess.PAWN: 1.0,
+            chess.KNIGHT: 3.0,
+            chess.BISHOP: 3.25,
+            chess.ROOK: 5.0,
+            chess.QUEEN: 9.0,
+        }
+        score = 0.0
+        for piece_type, value in piece_values.items():
+            score += len(board.pieces(piece_type, chess.WHITE)) * value
+            score -= len(board.pieces(piece_type, chess.BLACK)) * value
+        return score
+
+    def _adjudicate_capped_game(self, board, root):
+        root_value = self._root_value(root)
+        white_value = root_value if board.turn == chess.WHITE else -root_value
+        material_score = self._material_score(board)
+
+        if white_value >= self.CAPTURED_GAME_VALUE_THRESHOLD and material_score >= self.CAPTURED_GAME_MATERIAL_THRESHOLD:
+            return 1.0
+        if white_value <= -self.CAPTURED_GAME_VALUE_THRESHOLD and material_score <= -self.CAPTURED_GAME_MATERIAL_THRESHOLD:
+            return -1.0
+        return 0.0
+
+    def _get_game_outcome(self, board, root=None, move_count=0):
         """
         Final scalar outcome from White's perspective.
         """
@@ -213,6 +324,8 @@ class DataCollector:
             return 1.0
         if result == "0-1":
             return -1.0
+        if result == "*" and move_count >= self.MAX_GAME_LENGTH:
+            return self._adjudicate_capped_game(board, root)
         return 0.0
 
     def _record_search_profile(self, profile):
@@ -323,9 +436,12 @@ class DataCollector:
             return
 
         path = os.path.join(self.buffer_path, filename)
-        np.savez_compressed(
+        saver = np.savez_compressed if PROFILE.replay_compress else np.savez
+        saver(
             path,
             states=np.array([g["state"] for g in game_data], dtype=np.float32),
             pis=np.array([g["pi"] for g in game_data], dtype=np.float32),
             zs=np.array([g["z"] for g in game_data], dtype=np.float32),
+            encoder_version=np.int32(REPLAY_ENCODER_VERSION),
+            runtime_profile=np.array(PROFILE.name),
         )

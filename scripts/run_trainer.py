@@ -1,5 +1,7 @@
-from train import main
+from pathlib import Path
+import runpy
 
 
 if __name__ == "__main__":
-    main()
+    target = Path(__file__).resolve().with_name("train.py")
+    runpy.run_path(str(target), run_name="__main__")

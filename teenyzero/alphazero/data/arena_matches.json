@@ -1,0 +1,797 @@
+[
+  {
+    "details": [
+      {
+        "color": "white",
+        "final_fen": "r1bk2nr/1p2qp1p/p1p4b/3p1PpP/Pn1Bp3/1P4R1/2PPP1P1/R2QKBN1 w Q - 16 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1k1r/ppppnpp1/8/1B2B2p/3PP2N/5PP1/1bP4P/RN1QK1R1 w Q - 7 18",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 30,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1bqkbnr/ppp2p1p/8/3pp1p1/1nPPQ3/N7/PP2PPPP/R1B1KBNR w KQkq - 8 14",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 22,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "r1bqkb2/1p1np1p1/3p1p1r/p6p/3P4/P4NP1/1PP4P/RNBnKBR1 b q - 15 24",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 43,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b4r/pp1pqp1p/3k4/2pPN1p1/1nP1Pn1P/bN3PR1/PP4P1/RQ2KB2 b Q - 18 36",
+        "opening": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "g7g6"
+        ],
+        "plies": 67,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "r3k1r1/p1Nq1pp1/bpnp1b2/4pn1N/2P3P1/1P3P2/P2PP1BP/R1BQKR2 b Q - 11 32",
+        "opening": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6"
+        ],
+        "plies": 59,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b2r2/ppp2Nbp/2q1k1p1/3p3n/Pn1P3P/5P2/1PP1P1PR/R2QKBN1 w - - 11 31",
+        "opening": [
+          "g1f3",
+          "d7d5",
+          "d2d4",
+          "g8f6"
+        ],
+        "plies": 56,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "r1bk2q1/pppr2p1/B3p1n1/6Pp/2P1R3/8/1P3P2/2R1K1N1 w - - 21 64",
+        "opening": [
+          "e2e4",
+          "e7e6",
+          "d2d4",
+          "d7d5"
+        ],
+        "plies": 122,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1bk2nr/1p2qp1p/p1p4b/3p1PpP/Pn1Bp3/1P4R1/2PPP1P1/R2QKBN1 w Q - 16 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1k1r/ppppnpp1/8/1B2B2p/3PP2N/5PP1/1bP4P/RN1QK1R1 w Q - 7 18",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 30,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1bqkbnr/ppp2p1p/8/3pp1p1/1nPPQ3/N7/PP2PPPP/R1B1KBNR w KQkq - 8 14",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 22,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "r1bqkb2/1p1np1p1/3p1p1r/p6p/3P4/P4NP1/1PP4P/RNBnKBR1 b q - 15 24",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 43,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      }
+    ],
+    "draws": 12,
+    "games": 12,
+    "kind": "promotion",
+    "losses": 0,
+    "played_at": 1773714110.5846558,
+    "player_a": "cycle_00002",
+    "player_b": "cycle_00001",
+    "score": 0.5,
+    "wins": 0
+  },
+  {
+    "details": [
+      {
+        "color": "white",
+        "final_fen": "4brnr/pp2k1Q1/2p2p2/P2B3N/2PPP3/RPB2P2/3R1KPq/8 b - - 10 58",
+        "opening": [],
+        "plies": 115,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1rb1kb1r/ppp3p1/3q1p2/1N1p3p/1P2P2N/3Bn3/P1P1QPRP/R1n1K3 w - - 12 26",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 46,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1bqkbnr/ppp2ppp/4p3/3p4/1nPP4/NQ6/PP1KPPPP/R1B2BNR b - - 23 14",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 23,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1r2kb1r/pp1npppp/3p1q1n/2p5/4P2P/P3N1P1/1PPP1P2/RNBQKBR1 b Q - 28 27",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 49,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "2r1k1r1/p1Qb1pbp/4Nn2/1pPNq1p1/1n1Pp1P1/2R1PP2/PP2BB1P/2K3R1 w - - 15 34",
+        "opening": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "g7g6"
+        ],
+        "plies": 62,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnb1kb1r/pp1n2pp/5p2/1Nppp3/2PP2P1/4P3/PP2KPq1/R1BQ1BNR b - - 9 16",
+        "opening": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6"
+        ],
+        "plies": 27,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1q2b1r/pp2pk1p/Q1p2pN1/3NP1Bn/1PPP4/P4P2/2K3PP/R4BR1 w - - 11 32",
+        "opening": [
+          "g1f3",
+          "d7d5",
+          "d2d4",
+          "g8f6"
+        ],
+        "plies": 58,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "r1bq1bnr/1ppk2pp/2n1pp2/pN1pP3/3P4/2PQK2P/PP3PP1/R1B2BNR w - - 9 15",
+        "opening": [
+          "e2e4",
+          "e7e6",
+          "d2d4",
+          "d7d5"
+        ],
+        "plies": 24,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "4brnr/pp2k1Q1/2p2p2/P2B3N/2PPP3/RPB2P2/3R1KPq/8 b - - 10 58",
+        "opening": [],
+        "plies": 115,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1rb1kb1r/ppp3p1/3q1p2/1N1p3p/1P2P2N/3Bn3/P1P1QPRP/R1n1K3 w - - 12 26",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 46,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1bqkbnr/ppp2ppp/4p3/3p4/1nPP4/NQ6/PP1KPPPP/R1B2BNR b - - 23 14",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 23,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1r2kb1r/pp1npppp/3p1q1n/2p5/4P2P/P3N1P1/1PPP1P2/RNBQKBR1 b Q - 28 27",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 49,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      }
+    ],
+    "draws": 12,
+    "games": 12,
+    "kind": "promotion",
+    "losses": 0,
+    "played_at": 1773714960.095725,
+    "player_a": "cycle_00003",
+    "player_b": "cycle_00001",
+    "score": 0.5,
+    "wins": 0
+  },
+  {
+    "details": [
+      {
+        "color": "white",
+        "final_fen": "3r2n1/4kp2/R5pr/P3P2p/5q1P/1B4P1/1PP3R1/N3NK2 w - - 14 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/ppppkp1p/6p1/4p3/4P3/3P1NP1/PPPK1P1P/RNBQ1BR1 b - - 10 10",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 15,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b1kbnr/1pp2pp1/B3p3/3Pq2p/Pn1PPP1P/1Q5N/1P1N1KP1/R1B2R2 w - - 15 24",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 42,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/1p1kpppp/p2p4/2p5/3PP3/P4NP1/1PP2P1P/RNBQKB1R b - - 11 11",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 17,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "4br1k/Bp3r1p/R1p2pp1/3p2Pn/7P/P5P1/1P2PK2/R6B b - - 11 59",
+        "opening": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "g7g6"
+        ],
+        "plies": 113,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "3qb3/1ppnkpbr/1r4p1/p4P1p/P1pP3P/1PN1N3/4P3/R1BQKB1R b KQ - 8 26",
+        "opening": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6"
+        ],
+        "plies": 47,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "2rk2rq/2p2pbp/1Q6/3P2p1/PnN1nPP1/8/RPPN2P1/2B1KB1R w - - 7 42",
+        "opening": [
+          "g1f3",
+          "d7d5",
+          "d2d4",
+          "g8f6"
+        ],
+        "plies": 78,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "2b2n2/rpp1krb1/6p1/pN2np1p/3PP3/P6P/1PP2P2/2RKBqN1 w - - 12 33",
+        "opening": [
+          "e2e4",
+          "e7e6",
+          "d2d4",
+          "d7d5"
+        ],
+        "plies": 60,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "3r2n1/4kp2/R5pr/P3P2p/5q1P/1B4P1/1PP3R1/N3NK2 w - - 14 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/ppppkp1p/6p1/4p3/4P3/3P1NP1/PPPK1P1P/RNBQ1BR1 b - - 10 10",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 15,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b1kbnr/1pp2pp1/B3p3/3Pq2p/Pn1PPP1P/1Q5N/1P1N1KP1/R1B2R2 w - - 15 24",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 42,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/1p1kpppp/p2p4/2p5/3PP3/P4NP1/1PP2P1P/RNBQKB1R b - - 11 11",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 17,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      }
+    ],
+    "draws": 12,
+    "games": 12,
+    "kind": "promotion",
+    "losses": 0,
+    "played_at": 1773715832.904107,
+    "player_a": "cycle_00003",
+    "player_b": "cycle_00001",
+    "score": 0.5,
+    "wins": 0
+  },
+  {
+    "details": [
+      {
+        "color": "white",
+        "final_fen": "3r2n1/4kp2/R5pr/P3P2p/5q1P/1B4P1/1PP3R1/N3NK2 w - - 14 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/ppppkp1p/6p1/4p3/4P3/3P1NP1/PPPK1P1P/RNBQ1BR1 b - - 10 10",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 15,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b1kbnr/1pp2pp1/B3p3/3Pq2p/Pn1PPP1P/1Q5N/1P1N1KP1/R1B2R2 w - - 15 24",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 42,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/1p1kpppp/p2p4/2p5/3PP3/P4NP1/1PP2P1P/RNBQKB1R b - - 11 11",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 17,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "4br1k/Bp3r1p/R1p2pp1/3p2Pn/7P/P5P1/1P2PK2/R6B b - - 11 59",
+        "opening": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "g7g6"
+        ],
+        "plies": 113,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "3qb3/1ppnkpbr/1r4p1/p4P1p/P1pP3P/1PN1N3/4P3/R1BQKB1R b KQ - 8 26",
+        "opening": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6"
+        ],
+        "plies": 47,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "2rk2rq/2p2pbp/1Q6/3P2p1/PnN1nPP1/8/RPPN2P1/2B1KB1R w - - 7 42",
+        "opening": [
+          "g1f3",
+          "d7d5",
+          "d2d4",
+          "g8f6"
+        ],
+        "plies": 78,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "2b2n2/rpp1krb1/6p1/pN2np1p/3PP3/P6P/1PP2P2/2RKBqN1 w - - 12 33",
+        "opening": [
+          "e2e4",
+          "e7e6",
+          "d2d4",
+          "d7d5"
+        ],
+        "plies": 60,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "3r2n1/4kp2/R5pr/P3P2p/5q1P/1B4P1/1PP3R1/N3NK2 w - - 14 43",
+        "opening": [],
+        "plies": 84,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/ppppkp1p/6p1/4p3/4P3/3P1NP1/PPPK1P1P/RNBQ1BR1 b - - 10 10",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 15,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b1kbnr/1pp2pp1/B3p3/3Pq2p/Pn1PPP1P/1Q5N/1P1N1KP1/R1B2R2 w - - 15 24",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 42,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rnbq1bnr/1p1kpppp/p2p4/2p5/3PP3/P4NP1/1PP2P1P/RNBQKB1R b - - 11 11",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 17,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      }
+    ],
+    "draws": 12,
+    "games": 12,
+    "kind": "promotion",
+    "losses": 0,
+    "played_at": 1773715955.684576,
+    "player_a": "cycle_00004",
+    "player_b": "cycle_00001",
+    "score": 0.5,
+    "wins": 0
+  },
+  {
+    "details": [
+      {
+        "color": "white",
+        "final_fen": "r1b3r1/1p1k1p2/2p5/BR1pP3/B2P4/4PRP1/P1PK3P/4nN2 b - - 22 53",
+        "opening": [],
+        "plies": 105,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1r1qnb1r/p1p2k1p/n5p1/1p1ppp2/8/3b1NP1/PPPK1P1P/RNBQ1BR1 b - - 7 20",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 35,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1k2bnr/1p3p2/p1p1q2p/3pp1N1/1nPP1P2/1Q4K1/PP2P1PP/RN2BB1R b - - 18 30",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 55,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1n3b2/p1k5/3pp1p1/1pp2r2/3PP1pp/P3Q1PB/2P1KP1P/q5R1 w - - 16 61",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 116,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "rn2k2b/pb4rp/2p2pp1/3P2N1/PpP1KR2/4P1P1/1P5P/RN3B2 b - - 7 41",
+        "opening": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "g7g6"
+        ],
+        "plies": 77,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rn6/p1np2rp/b1k5/Ppp2pp1/1Pq3P1/5P2/3PP2P/3RKBR1 w - - 16 65",
+        "opening": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6"
+        ],
+        "plies": 124,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "4b1k1/1P1r1p1p/3P4/6r1/pP3bP1/5P2/PRN1P1BP/3K3R b - - 9 64",
+        "opening": [
+          "g1f3",
+          "d7d5",
+          "d2d4",
+          "g8f6"
+        ],
+        "plies": 123,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "rn1qkb1r/pp1bn2p/3p1p2/3pp1p1/3PPB2/2P4P/PP3PP1/RQ1K1BNR b - - 7 16",
+        "opening": [
+          "e2e4",
+          "e7e6",
+          "d2d4",
+          "d7d5"
+        ],
+        "plies": 27,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1b3r1/1p1k1p2/2p5/BR1pP3/B2P4/4PRP1/P1PK3P/4nN2 b - - 22 53",
+        "opening": [],
+        "plies": 105,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1r1qnb1r/p1p2k1p/n5p1/1p1ppp2/8/3b1NP1/PPPK1P1P/RNBQ1BR1 b - - 7 20",
+        "opening": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6"
+        ],
+        "plies": 35,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "white",
+        "final_fen": "r1k2bnr/1p3p2/p1p1q2p/3pp1N1/1nPP1P2/1Q4K1/PP2P1PP/RN2BB1R b - - 18 30",
+        "opening": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "e7e6"
+        ],
+        "plies": 55,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      },
+      {
+        "color": "black",
+        "final_fen": "1n3b2/p1k5/3pp1p1/1pp2r2/3PP1pp/P3Q1PB/2P1KP1P/q5R1 w - - 16 61",
+        "opening": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6"
+        ],
+        "plies": 116,
+        "result": "1/2-1/2",
+        "score_a": 0.5
+      }
+    ],
+    "draws": 12,
+    "games": 12,
+    "kind": "promotion",
+    "losses": 0,
+    "played_at": 1773716833.868952,
+    "player_a": "cycle_00005",
+    "player_b": "cycle_00001",
+    "score": 0.5,
+    "wins": 0
+  }
+]

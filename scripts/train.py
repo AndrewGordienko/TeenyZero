@@ -2,16 +2,19 @@ import json
 import os
 import time
 import atexit
+import math
+import subprocess
 
 import torch
 
+from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
 from teenyzero.alphazero.logic.trainer import (
     AlphaTrainer,
     dataloader_for_replay_window,
     prune_replay_buffer,
     replay_buffer_summary,
 )
-from teenyzero.alphazero.model import AlphaNet
+from teenyzero.alphazero.runtime import get_runtime_profile, runtime_profile_payload
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,56 +26,115 @@ TRAINING_STATE_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data
 TRAINER_LOCK_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "trainer.lock")
 TRAINING_HISTORY_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "training_history.json")
 
-MIN_SAMPLES_READY = 20_000
-TRAIN_INCREMENT = 20_000
-REPLAY_WINDOW_SAMPLES = 25_000
-BOOTSTRAP_WINDOW_SAMPLES = 200_000
-MAX_RETAINED_SAMPLES = 300_000
-BATCH_SIZE = 64
-EPOCHS_PER_CYCLE = 1
-POLL_INTERVAL_S = 10.0
+PROFILE = get_runtime_profile()
+PROFILE_SETTINGS = runtime_profile_payload(PROFILE)
+
+MIN_SAMPLES_READY = PROFILE.min_samples_ready
+TRAIN_INCREMENT = PROFILE.train_increment
+REPLAY_WINDOW_SAMPLES = PROFILE.replay_window_samples
+TRAIN_SAMPLES_PER_CYCLE = PROFILE.train_samples_per_cycle
+BOOTSTRAP_WINDOW_SAMPLES = PROFILE.bootstrap_window_samples
+MAX_RETAINED_SAMPLES = PROFILE.max_retained_samples
+BATCH_SIZE = PROFILE.train_batch_size
+EPOCHS_PER_CYCLE = PROFILE.train_epochs_per_cycle
+POLL_INTERVAL_S = PROFILE.train_poll_interval_s
+
+
+def _state_defaults():
+    return {
+        "status": "waiting",
+        "stage_started_at": None,
+        "last_trained_sample_count": 0,
+        "last_train_cutoff_mtime": 0.0,
+        "training_cycles": 0,
+        "last_loss": 0.0,
+        "last_policy_loss": 0.0,
+        "last_value_loss": 0.0,
+        "last_cycle_samples": 0,
+        "last_window_samples": 0,
+        "last_window_files": 0,
+        "last_train_started_at": None,
+        "last_train_finished_at": None,
+        "last_train_duration_s": 0.0,
+        "last_scan_duration_s": 0.0,
+        "last_window_build_duration_s": 0.0,
+        "last_train_phase_duration_s": 0.0,
+        "last_checkpoint_duration_s": 0.0,
+        "last_prune_duration_s": 0.0,
+        "last_avg_batch_time_ms": 0.0,
+        "last_batches_per_s": 0.0,
+        "last_samples_per_s": 0.0,
+        "buffer_sample_count": 0,
+        "buffer_file_count": 0,
+        "new_samples_since_last_train": 0,
+        "min_samples_ready": MIN_SAMPLES_READY,
+        "train_increment": TRAIN_INCREMENT,
+        "replay_window_samples": REPLAY_WINDOW_SAMPLES,
+        "bootstrap_window_samples": BOOTSTRAP_WINDOW_SAMPLES,
+        "train_samples_per_cycle": TRAIN_SAMPLES_PER_CYCLE,
+        "max_retained_samples": MAX_RETAINED_SAMPLES,
+        "active_window_samples": 0,
+        "loaded_files": 0,
+        "total_window_files": 0,
+        "loaded_window_samples": 0,
+        "window_load_elapsed_s": 0.0,
+        "window_files_per_s": 0.0,
+        "window_samples_per_s": 0.0,
+        "completed_batches": 0,
+        "total_batches": 0,
+        "train_elapsed_s": 0.0,
+        "avg_batch_time_ms": 0.0,
+        "batches_per_s": 0.0,
+        "samples_per_s": 0.0,
+        "trained_samples": 0,
+        "running_loss": 0.0,
+        "running_policy_loss": 0.0,
+        "running_value_loss": 0.0,
+        "heartbeat_at": None,
+        "latest_model_path": None,
+        "last_pruned_files": 0,
+        "device": None,
+        "runtime_profile": PROFILE.name,
+        "runtime_profile_settings": PROFILE_SETTINGS,
+        "training_history_path": TRAINING_HISTORY_PATH,
+    }
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    return value
 
 
 def _load_training_state():
+    defaults = _state_defaults()
     if not os.path.exists(TRAINING_STATE_PATH):
-        return {
-            "status": "waiting",
-            "last_trained_sample_count": 0,
-            "last_train_cutoff_mtime": 0.0,
-            "training_cycles": 0,
-            "last_loss": 0.0,
-            "last_policy_loss": 0.0,
-            "last_value_loss": 0.0,
-            "last_cycle_samples": 0,
-            "last_window_samples": 0,
-            "last_train_started_at": None,
-            "last_train_finished_at": None,
-            "last_train_duration_s": 0.0,
-            "buffer_sample_count": 0,
-            "buffer_file_count": 0,
-            "new_samples_since_last_train": 0,
-            "min_samples_ready": MIN_SAMPLES_READY,
-            "train_increment": TRAIN_INCREMENT,
-            "replay_window_samples": REPLAY_WINDOW_SAMPLES,
-            "bootstrap_window_samples": BOOTSTRAP_WINDOW_SAMPLES,
-            "max_retained_samples": MAX_RETAINED_SAMPLES,
-        }
+        return defaults
 
     with open(TRAINING_STATE_PATH, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+        loaded = _json_safe(json.load(handle))
+    defaults.update(loaded)
+    return defaults
 
 
 def _write_training_state(state):
     os.makedirs(os.path.dirname(TRAINING_STATE_PATH), exist_ok=True)
     tmp_path = TRAINING_STATE_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(state, handle, indent=2, sort_keys=True)
+        json.dump(_json_safe(state), handle, indent=2, sort_keys=True, allow_nan=False)
     os.replace(tmp_path, TRAINING_STATE_PATH)
 
 
 def _mark_stage(state, stage, **extra):
+    now = time.time()
+    if state.get("status") != stage:
+        state["stage_started_at"] = now
     state["status"] = stage
-    state["heartbeat_at"] = time.time()
+    state["heartbeat_at"] = now
     for key, value in extra.items():
         state[key] = value
     _write_training_state(state)
@@ -84,17 +146,37 @@ def _append_training_history(entry):
     if os.path.exists(TRAINING_HISTORY_PATH):
         try:
             with open(TRAINING_HISTORY_PATH, "r", encoding="utf-8") as handle:
-                history = json.load(handle)
+                history = _json_safe(json.load(handle))
         except Exception:
             history = []
 
-    history.append(entry)
+    history.append(_json_safe(entry))
     history = history[-200:]
 
     tmp_path = TRAINING_HISTORY_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(history, handle, indent=2)
+        json.dump(_json_safe(history), handle, indent=2, allow_nan=False)
     os.replace(tmp_path, TRAINING_HISTORY_PATH)
+
+
+def _pid_is_running(pid):
+    try:
+        os.kill(pid, 0)
+    except Exception:
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.0,
+        )
+        if result.stdout.strip().upper().startswith("Z"):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _acquire_trainer_lock():
@@ -103,10 +185,14 @@ def _acquire_trainer_lock():
         try:
             with open(TRAINER_LOCK_PATH, "r", encoding="utf-8") as handle:
                 existing_pid = int(handle.read().strip())
-            os.kill(existing_pid, 0)
-            return False
+            if _pid_is_running(existing_pid):
+                return False
         except Exception:
             pass
+        try:
+            os.remove(TRAINER_LOCK_PATH)
+        except OSError:
+            return False
 
     with open(TRAINER_LOCK_PATH, "w", encoding="utf-8") as handle:
         handle.write(str(os.getpid()))
@@ -127,24 +213,62 @@ def main():
         return
 
     atexit.register(_release_trainer_lock)
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     os.makedirs(MODEL_DIR, exist_ok=True)
 
-    model = AlphaNet(num_res_blocks=10, channels=128)
-    if os.path.exists(MODEL_PATH):
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model = build_model()
+    load_result = load_checkpoint(model, LATEST_MODEL_PATH, map_location=device, allow_partial=True)
+    if not load_result["loaded"]:
+        fallback_result = load_checkpoint(model, MODEL_PATH, map_location=device, allow_partial=True)
+        if fallback_result["loaded"]:
+            load_result = fallback_result
 
-    trainer = AlphaTrainer(model, device=device)
+    if load_result["loaded"]:
+        flavor = "partial" if load_result["partial"] else "full"
+        print(f"[Trainer] Loaded {flavor} checkpoint ({load_result['reason']}).")
+    else:
+        print(f"[Trainer] Starting from fresh weights ({load_result['reason']}).")
+
+    trainer = AlphaTrainer(
+        model,
+        device=device,
+        lr=PROFILE.train_lr,
+        optimizer_name=PROFILE.train_optimizer,
+        weight_decay=PROFILE.train_weight_decay,
+        momentum=PROFILE.train_momentum,
+        grad_accum_steps=PROFILE.train_grad_accum_steps,
+        precision=PROFILE.train_precision,
+        use_compile=PROFILE.train_compile,
+        max_grad_norm=PROFILE.max_grad_norm,
+    )
     state = _load_training_state()
     state["device"] = device
+    state["runtime_profile"] = PROFILE.name
+    state["runtime_profile_settings"] = PROFILE_SETTINGS
     state["training_history_path"] = TRAINING_HISTORY_PATH
     _write_training_state(state)
 
     print("[Trainer] Continuous trainer online.")
 
     while True:
-        _mark_stage(state, "scanning_replay_buffer")
+        scan_started = time.perf_counter()
+        _mark_stage(
+            state,
+            "scanning_replay_buffer",
+            loaded_files=0,
+            total_window_files=0,
+            loaded_window_samples=0,
+            window_load_elapsed_s=0.0,
+            window_files_per_s=0.0,
+            window_samples_per_s=0.0,
+            train_elapsed_s=0.0,
+            avg_batch_time_ms=0.0,
+            batches_per_s=0.0,
+            samples_per_s=0.0,
+            trained_samples=0,
+        )
         summary = replay_buffer_summary(DATA_DIR)
+        scan_duration_s = time.perf_counter() - scan_started
         files = summary["files"]
         total_samples = int(summary["sample_count"])
         cutoff_mtime = float(state.get("last_train_cutoff_mtime", 0.0) or 0.0)
@@ -156,6 +280,9 @@ def main():
         state["buffer_sample_count"] = total_samples
         state["buffer_file_count"] = int(summary["file_count"])
         state["new_samples_since_last_train"] = new_samples
+        state["last_scan_duration_s"] = float(scan_duration_s)
+        if state.get("status") != "waiting":
+            state["stage_started_at"] = time.time()
         state["status"] = "waiting"
         state["heartbeat_at"] = time.time()
         _write_training_state(state)
@@ -166,9 +293,28 @@ def main():
 
         train_started = time.time()
         state["last_train_started_at"] = train_started
-        _mark_stage(state, "building_replay_window")
+        window_started = time.perf_counter()
+        _mark_stage(
+            state,
+            "building_replay_window",
+            loaded_files=0,
+            total_window_files=0,
+            loaded_window_samples=0,
+            window_load_elapsed_s=0.0,
+            window_files_per_s=0.0,
+            window_samples_per_s=0.0,
+            completed_batches=0,
+            total_batches=0,
+            train_elapsed_s=0.0,
+            avg_batch_time_ms=0.0,
+            batches_per_s=0.0,
+            samples_per_s=0.0,
+            trained_samples=0,
+        )
         current_window = BOOTSTRAP_WINDOW_SAMPLES if int(state.get("training_cycles", 0)) == 0 else REPLAY_WINDOW_SAMPLES
+        sample_target = min(TRAIN_SAMPLES_PER_CYCLE, current_window)
         state["active_window_samples"] = current_window
+        state["train_samples_per_cycle"] = sample_target
         _write_training_state(state)
 
         def on_window_progress(progress):
@@ -178,17 +324,28 @@ def main():
                 loaded_files=int(progress.get("loaded_files", 0)),
                 total_window_files=int(progress.get("total_files", 0)),
                 loaded_window_samples=int(progress.get("loaded_samples", 0)),
+                window_load_elapsed_s=float(progress.get("elapsed_s", 0.0)),
+                window_files_per_s=float(progress.get("files_per_s", 0.0)),
+                window_samples_per_s=float(progress.get("samples_per_s", 0.0)),
             )
 
         loader, window_samples, files = dataloader_for_replay_window(
             DATA_DIR,
             max_samples=current_window,
+            sample_size=sample_target,
             batch_size=BATCH_SIZE,
             shuffle=True,
             progress_callback=on_window_progress,
+            rng_seed=int(time.time() * 1000) & 0xFFFFFFFF,
+            num_workers=PROFILE.train_num_workers,
+            pin_memory=PROFILE.train_pin_memory,
+            prefetch_factor=PROFILE.train_prefetch_factor,
         )
+        window_build_duration_s = time.perf_counter() - window_started
+        state["last_window_build_duration_s"] = float(window_build_duration_s)
 
         last_metrics = None
+        train_phase_started = time.perf_counter()
         for _ in range(EPOCHS_PER_CYCLE):
             def on_train_progress(progress):
                 _mark_stage(
@@ -199,16 +356,31 @@ def main():
                     running_loss=float(progress.get("running_loss", 0.0)),
                     running_policy_loss=float(progress.get("running_policy_loss", 0.0)),
                     running_value_loss=float(progress.get("running_value_loss", 0.0)),
+                    train_elapsed_s=float(progress.get("elapsed_s", 0.0)),
+                    avg_batch_time_ms=float(progress.get("avg_batch_time_ms", 0.0)),
+                    batches_per_s=float(progress.get("batches_per_s", 0.0)),
+                    samples_per_s=float(progress.get("samples_per_s", 0.0)),
+                    trained_samples=int(progress.get("samples_seen", 0)),
                 )
 
             last_metrics = trainer.train_epoch(loader, progress_callback=on_train_progress)
+        train_phase_duration_s = time.perf_counter() - train_phase_started
+        state["last_train_phase_duration_s"] = float(train_phase_duration_s)
 
+        checkpoint_started = time.perf_counter()
         _mark_stage(state, "saving_checkpoint")
-        trainer.save_checkpoint(MODEL_PATH)
         trainer.save_checkpoint(LATEST_MODEL_PATH)
+        checkpoint_duration_s = time.perf_counter() - checkpoint_started
+        state["last_checkpoint_duration_s"] = float(checkpoint_duration_s)
+
+        prune_started = time.perf_counter()
         prune_result = prune_replay_buffer(DATA_DIR, max_samples_to_keep=MAX_RETAINED_SAMPLES)
+        prune_duration_s = time.perf_counter() - prune_started
+        state["last_prune_duration_s"] = float(prune_duration_s)
 
         train_finished = time.time()
+        if state.get("status") != "waiting":
+            state["stage_started_at"] = train_finished
         state["status"] = "waiting"
         state["last_trained_sample_count"] = total_samples
         state["last_train_cutoff_mtime"] = max((info.mtime for info in files), default=cutoff_mtime)
@@ -221,6 +393,9 @@ def main():
         state["last_window_files"] = len(files)
         state["last_train_finished_at"] = train_finished
         state["last_train_duration_s"] = float(train_finished - train_started)
+        state["last_avg_batch_time_ms"] = float(last_metrics["avg_batch_time_ms"]) if last_metrics else 0.0
+        state["last_batches_per_s"] = float(last_metrics["batches_per_s"]) if last_metrics else 0.0
+        state["last_samples_per_s"] = float(last_metrics["samples_per_s"]) if last_metrics else 0.0
         state["buffer_sample_count"] = int(prune_result["remaining_samples"])
         state["buffer_file_count"] = int(prune_result["remaining_files"])
         state["new_samples_since_last_train"] = 0
@@ -232,10 +407,25 @@ def main():
         _append_training_history(
             {
                 "finished_at": train_finished,
+                "runtime_profile": PROFILE.name,
                 "loss": float(last_metrics["loss"]) if last_metrics else 0.0,
                 "policy_loss": float(last_metrics["policy_loss"]) if last_metrics else 0.0,
                 "value_loss": float(last_metrics["value_loss"]) if last_metrics else 0.0,
                 "window_samples": int(window_samples),
+                "window_files": len(files),
+                "train_samples_per_cycle": int(sample_target),
+                "new_samples": int(new_samples),
+                "buffer_samples": int(state["buffer_sample_count"]),
+                "buffer_files": int(state["buffer_file_count"]),
+                "batches": int(last_metrics["batches"]) if last_metrics else 0,
+                "samples_per_s": float(last_metrics["samples_per_s"]) if last_metrics else 0.0,
+                "batches_per_s": float(last_metrics["batches_per_s"]) if last_metrics else 0.0,
+                "avg_batch_time_ms": float(last_metrics["avg_batch_time_ms"]) if last_metrics else 0.0,
+                "scan_duration_s": float(scan_duration_s),
+                "window_build_duration_s": float(window_build_duration_s),
+                "train_duration_s": float(train_phase_duration_s),
+                "checkpoint_duration_s": float(checkpoint_duration_s),
+                "prune_duration_s": float(prune_duration_s),
                 "duration_s": float(train_finished - train_started),
             }
         )

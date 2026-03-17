@@ -1,8 +1,15 @@
 import time
 import queue
 import os
+from collections import deque
 import torch
 import numpy as np
+
+from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
+from teenyzero.alphazero.runtime import get_runtime_profile
+
+
+PROFILE = get_runtime_profile()
 
 
 def inference_worker(model_path, device, task_queue, response_queues, shared_stats=None):
@@ -18,16 +25,28 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
     Batched response format:
         (task_id, logits_batch, values_batch, True)
     """
-    from teenyzero.alphazero.model import AlphaNet
-
     print(f"[Inference] Initializing AlphaNet on {device}...")
 
-    model = AlphaNet(num_res_blocks=10, channels=128)
+    model = build_model()
+    if device == "cuda" and PROFILE.inference_precision == "bf16":
+        inference_dtype = torch.bfloat16
+    else:
+        inference_dtype = torch.float16 if device in {"mps", "cuda"} else torch.float32
+    use_channels_last = device in {"mps", "cuda"}
+
+    if device == "cuda":
+        if hasattr(torch, "set_float32_matmul_precision"):
+            torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
 
     try:
-        state_dict = torch.load(model_path, map_location="cpu")
-        model.load_state_dict(state_dict)
-        print(f"[Inference] Weights loaded successfully from {model_path}")
+        load_result = load_checkpoint(model, model_path, map_location="cpu", allow_partial=True)
+        if load_result["loaded"]:
+            print(f"[Inference] Weights loaded successfully from {model_path}")
+        else:
+            print(f"[Inference] Warning: Starting with fresh weights ({load_result['reason']})")
     except Exception as e:
         print(f"[Inference] Warning: Starting with fresh weights ({e})")
 
@@ -36,13 +55,19 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
     except OSError:
         model_mtime = None
 
-    model = model.to(device)
+    model = model.to(device=device, dtype=inference_dtype)
+    if use_channels_last:
+        model = model.to(memory_format=torch.channels_last)
+    if device == "cuda" and PROFILE.inference_compile and hasattr(torch, "compile"):
+        model = torch.compile(model)
     model.eval()
 
-    BATCH_SIZE = 64
-    WAIT_TIMEOUT = 0.0001
+    MAX_SINGLE_BATCH = PROFILE.inference_single_batch if device in {"cuda", "mps"} else 64
+    MAX_MERGED_POSITIONS = PROFILE.inference_merged_batch if device in {"cuda", "mps"} else 64
+    WAIT_TIMEOUT = PROFILE.inference_wait_timeout
     IDLE_GET_TIMEOUT = 1.0
     last_stats_push = 0.0
+    pending_tasks = deque()
     cluster_stats = {
         "device": device,
         "total_requests": 0,
@@ -71,22 +96,30 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
             return
 
         try:
-            state_dict = torch.load(model_path, map_location="cpu")
-            model.load_state_dict(state_dict)
+            load_checkpoint(model, model_path, map_location="cpu", allow_partial=True)
+            model.to(device=device, dtype=inference_dtype)
+            if use_channels_last:
+                model.to(memory_format=torch.channels_last)
             model.eval()
             model_mtime = current_mtime
             print(f"[Inference] Reloaded weights from {model_path}")
         except Exception as exc:
             print(f"[Inference] Failed to reload weights: {exc}")
 
+    def next_task():
+        if pending_tasks:
+            return pending_tasks.popleft()
+        return task_queue.get(timeout=IDLE_GET_TIMEOUT)
+
     while True:
         maybe_reload_model()
         singles = []
         singles_meta = []
         batch_requests = []
+        merged_positions = 0
 
         try:
-            task = task_queue.get(timeout=IDLE_GET_TIMEOUT)
+            task = next_task()
         except queue.Empty:
             continue
         except Exception:
@@ -100,15 +133,17 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
 
         if is_batch:
             batch_requests.append((task_id, payload, worker_id))
+            merged_positions += int(len(payload))
         else:
             singles.append(payload)
             singles_meta.append((task_id, worker_id))
+            merged_positions += 1
 
         gather_start = time.perf_counter()
         if not is_batch:
-            while len(singles) < BATCH_SIZE:
+            while len(singles) < MAX_SINGLE_BATCH and merged_positions < MAX_MERGED_POSITIONS:
                 try:
-                    task = task_queue.get_nowait()
+                    task = pending_tasks.popleft() if pending_tasks else task_queue.get_nowait()
                 except queue.Empty:
                     if (time.perf_counter() - gather_start) >= WAIT_TIMEOUT:
                         break
@@ -123,14 +158,20 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
                     is_batch = False
 
                 if is_batch:
+                    payload_len = int(len(payload))
+                    if merged_positions + payload_len > MAX_MERGED_POSITIONS and merged_positions > 0:
+                        pending_tasks.appendleft((task_id, payload, worker_id, True))
+                        break
                     batch_requests.append((task_id, payload, worker_id))
+                    merged_positions += payload_len
                 else:
                     singles.append(payload)
                     singles_meta.append((task_id, worker_id))
+                    merged_positions += 1
         else:
-            while True:
+            while merged_positions < MAX_MERGED_POSITIONS:
                 try:
-                    task = task_queue.get_nowait()
+                    task = pending_tasks.popleft() if pending_tasks else task_queue.get_nowait()
                 except queue.Empty:
                     break
                 except Exception:
@@ -143,10 +184,19 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
                     nested_is_batch = False
 
                 if nested_is_batch:
+                    payload_len = int(len(payload))
+                    if merged_positions + payload_len > MAX_MERGED_POSITIONS and merged_positions > 0:
+                        pending_tasks.appendleft((task_id, payload, worker_id, True))
+                        break
                     batch_requests.append((task_id, payload, worker_id))
-                elif len(singles) < BATCH_SIZE:
+                    merged_positions += payload_len
+                elif len(singles) < MAX_SINGLE_BATCH and merged_positions < MAX_MERGED_POSITIONS:
                     singles.append(payload)
                     singles_meta.append((task_id, worker_id))
+                    merged_positions += 1
+                else:
+                    pending_tasks.appendleft((task_id, payload, worker_id, False))
+                    break
 
         gather_wait_ms = (time.perf_counter() - gather_start) * 1000.0
 
@@ -161,7 +211,9 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
 
         if forward_inputs:
             merged_batch = np.concatenate(forward_inputs, axis=0)
-            tensor = torch.from_numpy(merged_batch).to(device, non_blocking=True)
+            tensor = torch.from_numpy(merged_batch).to(device=device, dtype=inference_dtype, non_blocking=True)
+            if use_channels_last:
+                tensor = tensor.contiguous(memory_format=torch.channels_last)
 
             forward_start = time.perf_counter()
             with torch.inference_mode():
@@ -235,7 +287,7 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
             except (AttributeError, NotImplementedError):
                 queue_depth = -1
 
-            cluster_stats["queue_depth"] = queue_depth
+            cluster_stats["queue_depth"] = queue_depth + len(pending_tasks) if queue_depth >= 0 else len(pending_tasks)
             current_cluster = dict(shared_stats.get("__cluster__", {}))
             current_cluster["inference"] = {
                 "device": cluster_stats["device"],
@@ -251,7 +303,7 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
                 "avg_gather_wait_ms": float(cluster_stats["avg_gather_wait_ms"]),
                 "avg_forward_ms": float(cluster_stats["avg_forward_ms"]),
                 "queue_depth": int(cluster_stats["queue_depth"]),
-                "max_batch_size": int(BATCH_SIZE),
+                "max_batch_size": int(MAX_MERGED_POSITIONS),
             }
             shared_stats["__cluster__"] = current_cluster
             last_stats_push = time.perf_counter()

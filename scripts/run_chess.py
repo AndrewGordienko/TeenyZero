@@ -6,9 +6,13 @@ import sys
 import os
 
 # Package imports
-from teenyzero.alphazero.model import AlphaNet
+from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
+from teenyzero.alphazero.runtime import get_runtime_profile
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.mcts.search import MCTS
+
+
+PROFILE = get_runtime_profile()
 
 def maybe_reload_model(model, evaluator, model_path, last_mtime):
     if not os.path.exists(model_path):
@@ -18,10 +22,10 @@ def maybe_reload_model(model, evaluator, model_path, last_mtime):
     if last_mtime is not None and current_mtime <= last_mtime:
         return last_mtime
 
-    state_dict = torch.load(model_path, map_location=evaluator.device)
-    model.load_state_dict(state_dict)
-    model.eval()
-    evaluator.clear_cache()
+    load_result = load_checkpoint(model, model_path, map_location=evaluator.device, allow_partial=True)
+    if load_result["loaded"]:
+        model.eval()
+        evaluator.clear_cache()
     return current_mtime
 
 
@@ -58,22 +62,24 @@ def main():
     # 1. Hardware Setup
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"[*] Initializing teenyzero on: {device}")
+    print(f"[*] Active runtime profile: {PROFILE.name}")
     model_path = "models/latest_model.pth"
 
     # 2. Brain Setup (Tuned for internship research)
-    model = AlphaNet(num_res_blocks=10, channels=128)
+    model = build_model()
     if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        load_checkpoint(model, model_path, map_location=device, allow_partial=True)
     
     evaluator = AlphaZeroEvaluator(model=model, device=device)
     
     # Focused parameters to reduce shuffling
     mcts_params = {
-        'SIMULATIONS': 800,    # Higher sims for deeper tactical lookahead
+        'SIMULATIONS': max(160, PROFILE.arena_simulations),
         'C_PUCT': 1.1,         # Lower exploration to focus on 'better' moves
         'VIRTUAL_LOSS': 1.0,
         'PARALLEL_THREADS': 4,
-        'FPU_REDUCTION': 0.5   # Higher penalty for unexplored paths
+        'FPU_REDUCTION': 0.5,  # Higher penalty for unexplored paths
+        'LEAF_BATCH_SIZE': max(8, PROFILE.selfplay_leaf_batch_size // 2),
     }
     engine = MCTS(evaluator=evaluator, params=mcts_params)
 
