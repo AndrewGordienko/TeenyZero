@@ -26,6 +26,9 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
         (task_id, logits_batch, values_batch, True)
     """
     print(f"[Inference] Initializing AlphaNet on {device}...")
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
 
     model = build_model()
     if device == "cuda" and PROFILE.inference_precision == "bf16":

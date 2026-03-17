@@ -22,6 +22,7 @@ class MCTS:
             self.params.update(params)
 
         self.tree_lock = threading.Lock()
+        self.use_tree_lock = int(self.params.get("PARALLEL_THREADS", 1)) > 1
         self.c_puct = self.params["C_PUCT"]
         self.v_loss = self.params["VIRTUAL_LOSS"]
         self.leaf_batch_size = max(1, int(self.params["LEAF_BATCH_SIZE"]))
@@ -152,10 +153,26 @@ class MCTS:
         """
         node = root
         path = []
-        board = root_board.copy(stack=getattr(self.evaluator, "requires_history", False))
+        history_depth = max(0, int(getattr(self.evaluator, "history_length", 1)) - 1)
+        board = root_board.copy(stack=history_depth if getattr(self.evaluator, "requires_history", False) else False)
 
         while True:
-            with self.tree_lock:
+            if self.use_tree_lock:
+                with self.tree_lock:
+                    move = self._select_child(node)
+                    if move is None:
+                        return None
+
+                    path.append((node, move))
+
+                    if self.v_loss != 0.0:
+                        node.N[move] += self.v_loss
+                        node.W[move] -= self.v_loss
+                        node.total_n += self.v_loss
+                        node.total_w -= self.v_loss
+
+                    child = node.children.get(move)
+            else:
                 move = self._select_child(node)
                 if move is None:
                     return None
@@ -227,11 +244,29 @@ class MCTS:
 
         if not item["is_terminal"]:
             priors = item["priors"]
-            with self.tree_lock:
+            if self.use_tree_lock:
+                with self.tree_lock:
+                    if leaf_move not in parent_node.children:
+                        parent_node.children[leaf_move] = MCTSNode(priors)
+            else:
                 if leaf_move not in parent_node.children:
                     parent_node.children[leaf_move] = MCTSNode(priors)
 
-        with self.tree_lock:
+        if self.use_tree_lock:
+            with self.tree_lock:
+                for n, m in reversed(item["path"]):
+                    if self.v_loss != 0.0:
+                        n.N[m] = n.N[m] - self.v_loss + 1
+                        n.W[m] = n.W[m] + self.v_loss + value
+                        n.total_n = n.total_n - self.v_loss + 1
+                        n.total_w = n.total_w + self.v_loss + value
+                    else:
+                        n.N[m] += 1
+                        n.W[m] += value
+                        n.total_n += 1
+                        n.total_w += value
+                    value = -value
+        else:
             for n, m in reversed(item["path"]):
                 if self.v_loss != 0.0:
                     n.N[m] = n.N[m] - self.v_loss + 1

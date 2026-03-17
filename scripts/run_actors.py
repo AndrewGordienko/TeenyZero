@@ -1,4 +1,10 @@
 import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import time
 import torch
 import argparse
@@ -49,6 +55,9 @@ def worker_task(worker_id, task_queue, response_queue, shared_stats, leaf_batch_
     """
     Self-play worker loop.
     """
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
     evaluator = AlphaZeroEvaluator(
         task_queue=task_queue,
         response_queue=response_queue,
@@ -88,6 +97,9 @@ def worker_task(worker_id, task_queue, response_queue, shared_stats, leaf_batch_
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
 
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_model.pth")

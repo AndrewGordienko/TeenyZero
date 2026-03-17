@@ -306,7 +306,7 @@ class AlphaZeroEvaluator:
         perspective = board.turn
 
         history_boards = []
-        scratch = board.copy(stack=True)
+        scratch = board.copy(stack=max(0, self.history_length - 1))
         history_boards.append(scratch.copy(stack=False))
         for _ in range(1, self.history_length):
             if not scratch.move_stack:
