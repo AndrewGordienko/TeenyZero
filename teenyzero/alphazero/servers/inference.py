@@ -218,8 +218,14 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
             forward_start = time.perf_counter()
             with torch.inference_mode():
                 logits, values = model(tensor)
-                logits = logits.detach().cpu().numpy().astype(np.float16, copy=False)
-                vals = values.detach().cpu().numpy().reshape(-1)
+                logits = logits.detach()
+                values = values.detach()
+                if logits.dtype == torch.bfloat16:
+                    logits = logits.to(dtype=torch.float32)
+                if values.dtype == torch.bfloat16:
+                    values = values.to(dtype=torch.float32)
+                logits = logits.cpu().numpy().astype(np.float16, copy=False)
+                vals = values.cpu().numpy().reshape(-1)
             forward_ms = (time.perf_counter() - forward_start) * 1000.0
 
             cluster_stats["server_forwards"] += 1

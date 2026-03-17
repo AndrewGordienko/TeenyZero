@@ -28,7 +28,8 @@ def _default_worker_count(device: str) -> int:
     cpu_budget = max(2, _available_cpu_count())
     reserved = 4 if device == "cuda" else 2
     usable = max(2, cpu_budget - reserved)
-    return max(2, min(PROFILE.selfplay_workers, usable // 2 or 1))
+    target = usable // 2 if device == "mps" else usable // 3
+    return max(2, min(PROFILE.selfplay_workers, target or 1, 8 if device == "cuda" else PROFILE.selfplay_workers))
 
 
 def bootstrap_model(path):
@@ -100,9 +101,11 @@ if __name__ == "__main__":
         help="Number of self-play processes (defaults come from the active runtime profile)",
     )
     args = parser.parse_args()
+    env_workers = os.environ.get("TEENYZERO_SELFPLAY_WORKERS", "").strip()
+    env_workers = int(env_workers) if env_workers.isdigit() else None
     default_workers = _default_worker_count(DEVICE)
     leaf_batch_size = PROFILE.selfplay_leaf_batch_size if DEVICE in {"cuda", "mps"} else 8
-    worker_count = args.workers if args.workers is not None else default_workers
+    worker_count = args.workers if args.workers is not None else (env_workers if env_workers is not None else default_workers)
 
     bootstrap_model(MODEL_PATH)
 
