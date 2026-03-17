@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_model.pth")
-    DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+    DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
