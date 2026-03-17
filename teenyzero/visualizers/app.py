@@ -13,23 +13,48 @@ import chess
 import torch
 from flask import Flask, request, jsonify, render_template, redirect
 from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, save_checkpoint
-from teenyzero.alphazero.runtime import get_runtime_profile, runtime_profile_payload
+from teenyzero.alphazero.runtime import get_runtime_profile, get_runtime_selection, runtime_profile_payload
+from teenyzero.alphazero.search_session import SearchSession
 from teenyzero.mcts.search import MCTS
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
+from teenyzero.paths import (
+    ARENA_HISTORY_PATH,
+    ARENA_LOCK_PATH,
+    ARENA_MATCHES_PATH,
+    ARENA_STATE_PATH,
+    BEST_MODEL_PATH,
+    LATEST_MODEL_PATH,
+    MODEL_ARCHIVE_PATH,
+    REPLAY_BUFFER_PATH,
+    TRAINER_LOCK_PATH,
+    TRAINING_HISTORY_PATH,
+    TRAINING_STATE_PATH,
+    ensure_runtime_dirs,
+)
 
-DASHBOARDS_ROOT = Path(__file__).resolve().parent / "dashboards"
+VISUALIZERS_ROOT = Path(__file__).resolve().parent
 
 app = Flask(
     __name__,
-    template_folder=str(DASHBOARDS_ROOT),
-    static_folder=str(DASHBOARDS_ROOT),
+    template_folder=str(VISUALIZERS_ROOT),
+    static_folder=str(VISUALIZERS_ROOT),
     static_url_path="/static",
 )
 
 # Fallback engine (will be overwritten if launched via run.py)
+RUNTIME_SELECTION = get_runtime_selection()
 model = build_model()
-evaluator = AlphaZeroEvaluator(model=model)
-engine = MCTS(evaluator=evaluator, params={'SIMULATIONS': 400, 'PARALLEL_THREADS': 4})
+evaluator = AlphaZeroEvaluator(model=model, device=RUNTIME_SELECTION.device)
+engine = MCTS(
+    evaluator=evaluator,
+    params={
+        "SIMULATIONS": max(160, get_runtime_profile().arena_simulations),
+        "PARALLEL_THREADS": 1,
+        "VIRTUAL_LOSS": 0.0,
+        "LEAF_BATCH_SIZE": max(8, get_runtime_profile().selfplay_leaf_batch_size // 2),
+    },
+)
+search_session = SearchSession(engine)
 
 board = chess.Board()
 _actor_process = None
@@ -39,17 +64,6 @@ _arena_lock = threading.Lock()
 _trainer_process = None
 _trainer_lock = threading.Lock()
 _play_model_mtime = None
-TRAINING_STATE_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "training_state.json"
-TRAINING_HISTORY_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "training_history.json"
-TRAINER_LOCK_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "trainer.lock"
-ARENA_STATE_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "arena_state.json"
-ARENA_HISTORY_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "arena_history.json"
-ARENA_MATCHES_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "arena_matches.json"
-ARENA_LOCK_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "arena.lock"
-REPLAY_BUFFER_PATH = Path(__file__).resolve().parents[1] / "alphazero" / "data" / "replay_buffer"
-BEST_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "best_model.pth"
-LATEST_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "latest_model.pth"
-MODEL_ARCHIVE_PATH = Path(__file__).resolve().parents[2] / "models" / "archive"
 RUNTIME_PROFILE = get_runtime_profile()
 RUNTIME_PROFILE_SETTINGS = runtime_profile_payload(RUNTIME_PROFILE)
 
@@ -232,7 +246,7 @@ def _ensure_trainer_running():
         if _trainer_running():
             return True
 
-        run_trainer = _script_path("training", "run_loop.py")
+        run_trainer = _script_path("train.py")
         _trainer_process = subprocess.Popen(
             [sys.executable, str(run_trainer)],
             cwd=str(_scripts_dir().parent),
@@ -291,7 +305,7 @@ def _ensure_arena_running():
         if _arena_running():
             return True
 
-        run_arena = _script_path("eval", "run_arena.py")
+        run_arena = _script_path("run_arena.py")
         _arena_process = subprocess.Popen(
             [sys.executable, str(run_arena)],
             cwd=str(_scripts_dir().parent),
@@ -302,6 +316,7 @@ def _ensure_arena_running():
 
 def _reset_training_artifacts():
     global _play_model_mtime
+    ensure_runtime_dirs()
     REPLAY_BUFFER_PATH.mkdir(parents=True, exist_ok=True)
     removed_files = 0
     for path in REPLAY_BUFFER_PATH.glob("*.npz"):
@@ -381,7 +396,7 @@ def _ensure_actor_cluster_running():
             return True
 
         if _actor_process is None or _actor_process.poll() is not None:
-            run_actors = _script_path("selfplay", "run_factory.py")
+            run_actors = _script_path("run_actors.py")
             _actor_process = subprocess.Popen(
                 [sys.executable, str(run_actors)],
                 cwd=str(_scripts_dir().parent),
@@ -396,27 +411,16 @@ atexit.register(_cleanup_trainer_process)
 
 
 def _root_win_prob(root):
-    if root is None or not getattr(root, "N", None):
+    if root is None or getattr(root, "total_n", 0.0) <= 0.0:
         return 50.0
 
-    weighted_q = 0.0
-    total_visits = 0
-    for move, visits in root.N.items():
-        if visits <= 0:
-            continue
-        total_visits += visits
-        weighted_q += root.W[move]
-
-    if total_visits <= 0:
-        return 50.0
-
-    q = weighted_q / total_visits
+    q = float(root.total_w / max(root.total_n, 1.0))
     return round(float((q + 1.0) * 50.0), 1)
 
 
 def _maybe_reload_play_model():
-    global _play_model_mtime
-    model_path = Path(__file__).resolve().parents[2] / "models" / "latest_model.pth"
+    global _play_model_mtime, search_session
+    model_path = LATEST_MODEL_PATH
     if not model_path.exists():
         return
 
@@ -428,6 +432,7 @@ def _maybe_reload_play_model():
     if load_result["loaded"]:
         evaluator.model.eval()
         evaluator.clear_cache()
+        search_session.reset()
         _play_model_mtime = mtime
 
 @app.route("/")
@@ -515,7 +520,7 @@ def reset_training():
 
 @app.route("/move", methods=["POST"])
 def move():
-    global board
+    global board, search_session
     _maybe_reload_play_model()
     data = request.json
     uci = data.get("uci")
@@ -528,7 +533,7 @@ def move():
             
             # 2. Engine Response
             if not board.is_game_over():
-                engine_move, _, root = engine.search(board)
+                engine_move, _, root = search_session.search(board)
                 # Check legality before pushing to avoid AssertionError
                 if engine_move in board.legal_moves:
                     board.push(engine_move)
@@ -547,17 +552,18 @@ def move():
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    global board
+    global board, search_session
     _maybe_reload_play_model()
     data = request.json or {}
     side = data.get("side", "w")
     
     # Strictly reset to a fresh board instance
     board = chess.Board()
+    search_session.reset()
     
     # If playing as Black, Engine makes the first move for White
     if side == "b":
-        engine_move, _, root = engine.search(board)
+        engine_move, _, root = search_session.search(board)
         if engine_move in board.legal_moves:
             board.push(engine_move)
             return jsonify({

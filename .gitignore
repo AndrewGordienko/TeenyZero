@@ -30,9 +30,7 @@ ENV/
 
 # Project Specific
 models/*.pth
+models/archive/
+var/
 *.log
 .DS_Store
-teenyzero/alphazero/data/replay_buffer/
-teenyzero/alphazero/data/training_state.json
-teenyzero/alphazero/data/training_history.json
-teenyzero/alphazero/data/trainer.lock

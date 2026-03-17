@@ -1,8 +1,12 @@
+from dataclasses import dataclass
+
 import chess
+import chess.polyglot
 import time
 import torch
 import numpy as np
 
+from teenyzero.alphazero.backend import native_speedups_module, resolve_board_backend_name
 from teenyzero.alphazero.config import (
     AUX_PLANES,
     INPUT_HISTORY_LENGTH,
@@ -13,6 +17,12 @@ from teenyzero.alphazero.runtime import get_runtime_profile
 
 
 PROFILE = get_runtime_profile()
+
+
+@dataclass(frozen=True)
+class MovePriors:
+    moves: tuple
+    probs: np.ndarray
 
 
 class AlphaZeroEvaluator:
@@ -43,6 +53,9 @@ class AlphaZeroEvaluator:
         self.legal_move_cache = {}
         self.pending_results = {}
         self.request_counter = 0
+        self.move_index_cache = {}
+        self.board_backend = resolve_board_backend_name()
+        self.native_speedups = native_speedups_module() if self.board_backend == "native" else None
         if self.device == "cuda" and PROFILE.inference_precision == "bf16":
             self.inference_dtype = torch.bfloat16
         else:
@@ -84,6 +97,7 @@ class AlphaZeroEvaluator:
             "positions_evaluated": int(self.profile["positions_evaluated"]),
             "single_requests": int(self.profile["single_requests"]),
             "batch_requests": int(self.profile["batch_requests"]),
+            "board_backend": self.board_backend,
         }
 
     def _next_task_id(self):
@@ -276,61 +290,68 @@ class AlphaZeroEvaluator:
         legal_moves, legal_indices = self._get_legal_moves_and_indices(board)
         if not legal_moves:
             self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-            return {}, float(np.clip(np.nan_to_num(v, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0))
+            empty = MovePriors((), np.empty((0,), dtype=np.float32))
+            return empty, float(np.clip(np.nan_to_num(v, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0))
 
         legal_logits = np.asarray(logits[legal_indices], dtype=np.float32)
         safe_value = float(np.clip(np.nan_to_num(v, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0))
         if not np.isfinite(legal_logits).all():
-            uniform = 1.0 / len(legal_moves)
+            uniform = np.full(len(legal_moves), 1.0 / len(legal_moves), dtype=np.float32)
             self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-            return {move: uniform for move in legal_moves}, safe_value
+            return MovePriors(legal_moves, uniform), safe_value
 
         max_logit = float(np.max(legal_logits))
         exp_vals = np.exp(legal_logits - max_logit).astype(np.float32, copy=False)
         total = float(np.sum(exp_vals))
 
         if not np.isfinite(total) or total <= 0.0:
-            uniform = 1.0 / len(legal_moves)
+            uniform = np.full(len(legal_moves), 1.0 / len(legal_moves), dtype=np.float32)
             self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-            return {move: uniform for move in legal_moves}, safe_value
+            return MovePriors(legal_moves, uniform), safe_value
 
         inv_total = 1.0 / total
         self.profile["mask_ms"] += (time.perf_counter() - mask_start) * 1000.0
-        return {
-            move: float(prob)
-            for move, prob in zip(legal_moves, exp_vals * inv_total)
-        }, safe_value
+        return MovePriors(legal_moves, exp_vals * inv_total), safe_value
 
     def encode_board(self, board: chess.Board):
         planes = np.zeros((INPUT_PLANES, 8, 8), dtype=np.float32)
         perspective = board.turn
-
-        history_boards = []
         scratch = board.copy(stack=max(0, self.history_length - 1))
-        history_boards.append(scratch.copy(stack=False))
-        for _ in range(1, self.history_length):
+        for history_idx in range(self.history_length):
+            offset = history_idx * PIECE_PLANES_PER_POSITION
+            self._fill_piece_planes(planes, offset, scratch, perspective)
             if not scratch.move_stack:
                 break
             scratch.pop()
-            history_boards.append(scratch.copy(stack=False))
-
-        for history_idx, history_board in enumerate(history_boards):
-            offset = history_idx * PIECE_PLANES_PER_POSITION
-            self._fill_piece_planes(planes, offset, history_board, perspective)
 
         aux_offset = self.history_length * PIECE_PLANES_PER_POSITION
         self._fill_aux_planes(planes, aux_offset, board, perspective)
         return planes
 
     def _fill_piece_planes(self, planes, offset, board: chess.Board, perspective: bool):
-        for square, piece in board.piece_map().items():
-            oriented_square = self._orient_square(square, perspective)
-            rank = chess.square_rank(oriented_square)
-            file = chess.square_file(oriented_square)
-            plane = piece.piece_type - 1
-            if piece.color != perspective:
-                plane += 6
-            planes[offset + plane, rank, file] = 1.0
+        friendly = board.occupied_co[perspective]
+        piece_bitboards = (
+            board.pawns,
+            board.knights,
+            board.bishops,
+            board.rooks,
+            board.queens,
+            board.kings,
+        )
+
+        for piece_offset, piece_bits in enumerate(piece_bitboards):
+            self._write_piece_bitboard(
+                planes,
+                offset + piece_offset,
+                piece_bits & friendly,
+                perspective,
+            )
+            self._write_piece_bitboard(
+                planes,
+                offset + piece_offset + 6,
+                piece_bits & board.occupied_co[not perspective],
+                perspective,
+            )
 
     def _fill_aux_planes(self, planes, offset, board: chess.Board, perspective: bool):
         planes[offset, :, :] = 1.0
@@ -346,10 +367,39 @@ class AlphaZeroEvaluator:
     def _orient_square(self, square, perspective: bool):
         return square if perspective == chess.WHITE else chess.square_mirror(square)
 
+    def _write_piece_bitboard(self, planes, plane_idx, bitboard, perspective):
+        while bitboard:
+            lsb = bitboard & -bitboard
+            square = lsb.bit_length() - 1
+            oriented_square = self._orient_square(square, perspective)
+            rank = chess.square_rank(oriented_square)
+            file = chess.square_file(oriented_square)
+            planes[plane_idx, rank, file] = 1.0
+            bitboard ^= lsb
+
     def move_to_idx(self, move: chess.Move, turn: bool):
         """
         Maps a move into AlphaZero-style 8x8x73 policy indexing.
         """
+        promotion = int(move.promotion or 0)
+        turn_key = 1 if turn == chess.WHITE else 0
+        cache_key = (move.from_square, move.to_square, promotion, turn_key)
+        cached = self.move_index_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if self.native_speedups is not None:
+            idx = int(
+                self.native_speedups.move_to_idx(
+                    int(move.from_square),
+                    int(move.to_square),
+                    promotion,
+                    turn_key,
+                )
+            )
+            self.move_index_cache[cache_key] = idx
+            return idx
+
         from_sq = move.from_square
         to_sq = move.to_square
 
@@ -370,7 +420,9 @@ class AlphaZeroEvaluator:
             }
             direction = df + 1
             plane_idx = 64 + piece_offset[move.promotion] * 3 + direction
-            return from_sq * 73 + plane_idx
+            idx = from_sq * 73 + plane_idx
+            self.move_index_cache[cache_key] = idx
+            return idx
 
         knight_moves = [
             (2, 1), (1, 2), (-1, 2), (-2, 1),
@@ -378,13 +430,17 @@ class AlphaZeroEvaluator:
         ]
         if (dr, df) in knight_moves:
             plane_idx = 56 + knight_moves.index((dr, df))
-            return from_sq * 73 + plane_idx
+            idx = from_sq * 73 + plane_idx
+            self.move_index_cache[cache_key] = idx
+            return idx
 
         direction_key = (int(np.sign(dr)), int(np.sign(df)))
         dist = max(abs(dr), abs(df))
         dir_idx = self._dir_map[direction_key]
         plane_idx = dir_idx * 7 + (dist - 1)
-        return from_sq * 73 + plane_idx
+        idx = from_sq * 73 + plane_idx
+        self.move_index_cache[cache_key] = idx
+        return idx
 
     def _build_direction_map(self):
         return {
@@ -425,14 +481,18 @@ class AlphaZeroEvaluator:
         return encoded
 
     def _position_key(self, board: chess.Board):
-        ep = chess.square_name(board.ep_square) if board.ep_square is not None else "-"
-        history = tuple(move.uci() for move in board.move_stack[-(self.history_length - 1):])
+        ep_square = int(board.ep_square) if board.ep_square is not None else -1
+        history_count = max(0, self.history_length - 1)
+        history = tuple(
+            self._move_signature(move)
+            for move in (board.move_stack[-history_count:] if history_count > 0 else ())
+        )
         return (
-            board.board_fen(),
-            board.turn,
-            board.castling_rights,
-            ep,
-            board.halfmove_clock,
+            int(chess.polyglot.zobrist_hash(board)),
+            int(board.turn),
+            int(board.castling_rights),
+            ep_square,
+            int(board.halfmove_clock),
             history,
         )
 
@@ -451,3 +511,15 @@ class AlphaZeroEvaluator:
             "single_requests": 0,
             "batch_requests": 0,
         }
+
+    def _move_signature(self, move: chess.Move):
+        promotion = int(move.promotion or 0)
+        if self.native_speedups is not None:
+            return int(
+                self.native_speedups.move_signature(
+                    int(move.from_square),
+                    int(move.to_square),
+                    promotion,
+                )
+            )
+        return int(move.from_square) | (int(move.to_square) << 6) | (promotion << 12)

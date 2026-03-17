@@ -67,6 +67,23 @@ class RuntimeProfile:
         return payload
 
 
+@dataclass(frozen=True)
+class RuntimeSelection:
+    device: str
+    profile: RuntimeProfile
+    requested_device: str
+    requested_profile: str
+
+    def to_dict(self):
+        return {
+            "device": self.device,
+            "requested_device": self.requested_device,
+            "requested_profile": self.requested_profile,
+            "runtime_profile": self.profile.name,
+            "runtime_profile_settings": self.profile.to_dict(),
+        }
+
+
 LOCAL_PROFILE = RuntimeProfile(
     name="local",
     input_history_length=4,
@@ -109,6 +126,53 @@ LOCAL_PROFILE = RuntimeProfile(
     inference_single_batch=32,
     inference_merged_batch=32,
     inference_wait_timeout=0.0001,
+    inference_compile=False,
+    inference_precision="fp16",
+)
+
+
+MPS_PROFILE = RuntimeProfile(
+    name="mps",
+    input_history_length=8,
+    piece_planes_per_position=12,
+    aux_planes=8,
+    model_version=4,
+    model_res_blocks=16,
+    model_channels=192,
+    policy_head_channels=48,
+    value_head_hidden=192,
+    replay_encoder_version=4,
+    replay_compress=True,
+    min_samples_ready=40_000,
+    train_increment=30_000,
+    replay_window_samples=250_000,
+    train_samples_per_cycle=80_000,
+    bootstrap_window_samples=120_000,
+    max_retained_samples=300_000,
+    train_batch_size=96,
+    train_epochs_per_cycle=1,
+    train_poll_interval_s=5.0,
+    train_optimizer="adamw",
+    train_lr=2e-4,
+    train_weight_decay=1e-4,
+    train_momentum=0.9,
+    train_grad_accum_steps=4,
+    train_num_workers=4,
+    train_pin_memory=False,
+    train_prefetch_factor=2,
+    train_compile=False,
+    train_precision="fp16",
+    max_grad_norm=2.0,
+    selfplay_workers=6,
+    selfplay_simulations=128,
+    selfplay_leaf_batch_size=24,
+    arena_simulations=192,
+    arena_promotion_games=16,
+    arena_baseline_games=6,
+    arena_promotion_threshold=0.55,
+    inference_single_batch=48,
+    inference_merged_batch=96,
+    inference_wait_timeout=0.0004,
     inference_compile=False,
     inference_precision="fp16",
 )
@@ -210,33 +274,103 @@ H200_PROFILE = RuntimeProfile(
 
 PROFILES = {
     LOCAL_PROFILE.name: LOCAL_PROFILE,
+    MPS_PROFILE.name: MPS_PROFILE,
     H100_PROFILE.name: H100_PROFILE,
     H200_PROFILE.name: H200_PROFILE,
 }
 
+DEVICE_ALIASES = {
+    "": "auto",
+    "auto": "auto",
+    "cpu": "cpu",
+    "mps": "mps",
+    "cuda": "cuda",
+    "gpu": "cuda",
+    "h100": "cuda",
+    "h200": "cuda",
+}
 
-def active_profile_name():
-    explicit = os.environ.get("TEENYZERO_PROFILE", "").strip().lower()
-    if explicit:
-        return explicit
+
+def normalize_device_name(device_name):
+    return DEVICE_ALIASES.get((device_name or "").strip().lower(), "auto")
+
+
+def requested_device_name():
+    return normalize_device_name(os.environ.get("TEENYZERO_DEVICE", "auto"))
+
+
+def requested_profile_name():
+    return os.environ.get("TEENYZERO_PROFILE", "").strip().lower()
+
+
+def device_available(device_name):
+    if device_name == "cuda":
+        return bool(torch.cuda.is_available())
+    if device_name == "mps":
+        return bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+    return device_name == "cpu"
+
+
+def _auto_device_name():
+    if device_available("cuda"):
+        return "cuda"
+    if device_available("mps"):
+        return "mps"
+    return "cpu"
+
+
+def active_device_name():
+    requested = requested_device_name()
+    if requested != "auto" and device_available(requested):
+        return requested
+    return _auto_device_name()
+
+
+def _device_profile_name(device_name):
+    if device_name == "mps":
+        return MPS_PROFILE.name
+    if device_name != "cuda":
+        return LOCAL_PROFILE.name
 
     try:
-        if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0).lower()
-            if "h200" in device_name:
-                return H200_PROFILE.name
-            if "h100" in device_name:
-                return H100_PROFILE.name
+        device_name = torch.cuda.get_device_name(0).lower()
     except Exception:
-        pass
+        return LOCAL_PROFILE.name
 
+    if "h200" in device_name:
+        return H200_PROFILE.name
+    if "h100" in device_name:
+        return H100_PROFILE.name
     return LOCAL_PROFILE.name
+
+
+def active_profile_name():
+    explicit = requested_profile_name()
+    if explicit:
+        return explicit
+    return _device_profile_name(active_device_name())
 
 
 def get_runtime_profile():
     return PROFILES.get(active_profile_name(), LOCAL_PROFILE)
 
 
+def get_runtime_selection():
+    device = active_device_name()
+    profile = PROFILES.get(active_profile_name(), LOCAL_PROFILE)
+    return RuntimeSelection(
+        device=device,
+        profile=profile,
+        requested_device=requested_device_name(),
+        requested_profile=requested_profile_name(),
+    )
+
+
 def runtime_profile_payload(profile=None):
-    active = profile or get_runtime_profile()
-    return active.to_dict()
+    selection = get_runtime_selection()
+    active = profile or selection.profile
+    payload = active.to_dict()
+    payload["device"] = selection.device
+    payload["requested_device"] = selection.requested_device
+    payload["requested_profile"] = selection.requested_profile
+    return payload

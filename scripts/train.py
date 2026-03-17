@@ -3,9 +3,16 @@ import os
 import time
 import atexit
 import math
+import errno
 import subprocess
+from pathlib import Path
 
 import torch
+
+from teenyzero.runtime_bootstrap import bootstrap_runtime_cli
+
+
+bootstrap_runtime_cli()
 
 from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
 from teenyzero.alphazero.logic.trainer import (
@@ -14,19 +21,31 @@ from teenyzero.alphazero.logic.trainer import (
     prune_replay_buffer,
     replay_buffer_summary,
 )
-from teenyzero.alphazero.runtime import get_runtime_profile, runtime_profile_payload
+from teenyzero.alphazero.runtime import get_runtime_selection, runtime_profile_payload
+from teenyzero.paths import (
+    BEST_MODEL_PATH,
+    LATEST_MODEL_PATH,
+    MODEL_ARCHIVE_PATH,
+    REPLAY_BUFFER_PATH,
+    TRAINER_LOCK_PATH,
+    TRAINING_HISTORY_PATH,
+    TRAINING_STATE_PATH,
+    ensure_runtime_dirs,
+    runtime_paths_payload,
+)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "replay_buffer")
-MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
-MODEL_PATH = os.path.join(MODEL_DIR, "best_model.pth")
-LATEST_MODEL_PATH = os.path.join(MODEL_DIR, "latest_model.pth")
-TRAINING_STATE_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "training_state.json")
-TRAINER_LOCK_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "trainer.lock")
-TRAINING_HISTORY_PATH = os.path.join(PROJECT_ROOT, "teenyzero", "alphazero", "data", "training_history.json")
+DATA_DIR = str(REPLAY_BUFFER_PATH)
+MODEL_DIR = str(BEST_MODEL_PATH.parent)
+MODEL_PATH = str(BEST_MODEL_PATH)
+LATEST_MODEL_PATH = str(LATEST_MODEL_PATH)
+TRAINING_STATE_PATH = str(TRAINING_STATE_PATH)
+TRAINER_LOCK_PATH = str(TRAINER_LOCK_PATH)
+TRAINING_HISTORY_PATH = str(TRAINING_HISTORY_PATH)
 
-PROFILE = get_runtime_profile()
+RUNTIME = get_runtime_selection()
+PROFILE = RUNTIME.profile
 PROFILE_SETTINGS = runtime_profile_payload(PROFILE)
 
 MIN_SAMPLES_READY = PROFILE.min_samples_ready
@@ -96,6 +115,7 @@ def _state_defaults():
         "device": None,
         "runtime_profile": PROFILE.name,
         "runtime_profile_settings": PROFILE_SETTINGS,
+        "runtime_paths": runtime_paths_payload(),
         "training_history_path": TRAINING_HISTORY_PATH,
     }
 
@@ -124,9 +144,18 @@ def _load_training_state():
 def _write_training_state(state):
     os.makedirs(os.path.dirname(TRAINING_STATE_PATH), exist_ok=True)
     tmp_path = TRAINING_STATE_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(_json_safe(state), handle, indent=2, sort_keys=True, allow_nan=False)
-    os.replace(tmp_path, TRAINING_STATE_PATH)
+    payload = _json_safe(state)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
+        os.replace(tmp_path, TRAINING_STATE_PATH)
+    except OSError as exc:
+        if exc.errno != errno.ENOSPC:
+            raise
+        _reclaim_runtime_space()
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
+        os.replace(tmp_path, TRAINING_STATE_PATH)
 
 
 def _mark_stage(state, stage, **extra):
@@ -154,9 +183,35 @@ def _append_training_history(entry):
     history = history[-200:]
 
     tmp_path = TRAINING_HISTORY_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(_json_safe(history), handle, indent=2, allow_nan=False)
-    os.replace(tmp_path, TRAINING_HISTORY_PATH)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(_json_safe(history), handle, indent=2, allow_nan=False)
+        os.replace(tmp_path, TRAINING_HISTORY_PATH)
+    except OSError as exc:
+        if exc.errno != errno.ENOSPC:
+            raise
+
+
+def _reclaim_runtime_space():
+    try:
+        prune_replay_buffer(DATA_DIR, max_samples_to_keep=max(1, MAX_RETAINED_SAMPLES // 2))
+    except Exception:
+        pass
+
+    try:
+        archive_paths = sorted(MODEL_ARCHIVE_PATH.glob("*.pth"))
+        while len(archive_paths) > 2:
+            oldest = archive_paths.pop(0)
+            oldest.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    for suffix in (".tmp",):
+        for path in Path(os.path.dirname(TRAINING_STATE_PATH)).glob(f"*{suffix}"):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _pid_is_running(pid):
@@ -213,8 +268,9 @@ def main():
         return
 
     atexit.register(_release_trainer_lock)
-    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    device = RUNTIME.device
     os.makedirs(MODEL_DIR, exist_ok=True)
+    ensure_runtime_dirs()
 
     model = build_model()
     load_result = load_checkpoint(model, LATEST_MODEL_PATH, map_location=device, allow_partial=True)
@@ -245,6 +301,7 @@ def main():
     state["device"] = device
     state["runtime_profile"] = PROFILE.name
     state["runtime_profile_settings"] = PROFILE_SETTINGS
+    state["runtime_paths"] = runtime_paths_payload()
     state["training_history_path"] = TRAINING_HISTORY_PATH
     _write_training_state(state)
 

@@ -1,4 +1,5 @@
 import os
+import errno
 import numpy as np
 import chess
 from collections import Counter, deque
@@ -116,7 +117,7 @@ class DataCollector:
             selected_move = self._avoid_draw_repetition(board, selected_move, pi_dist, best_move, move_count)
 
             # Save training example BEFORE pushing the move
-            state = self.evaluator.encode_board(board)
+            state = np.array(self.evaluator._encode_cached(board), copy=True)
             target_pi = self._apply_temperature(pi_dist, temperature) if move_count < temp_threshold else pi_dist
             pi_vector = self._dist_to_vector(target_pi, board)
 
@@ -228,19 +229,26 @@ class DataCollector:
         Extract normalized visit probabilities from the MCTS root.
         Kept here for compatibility/debugging, though search() already returns pi_dist.
         """
-        if root is None or not root.N:
+        if root is None or not getattr(root, "moves", ()):
             return {}
 
-        total = sum(root.N.values())
+        total = float(np.sum(root.visits))
         if total <= 0:
-            if not root.P:
+            if len(root.priors) == 0:
                 return {}
-            prob_sum = sum(root.P.values())
+            prob_sum = float(np.sum(root.priors))
             if prob_sum <= 0:
-                return self._uniform_pi_dist(list(root.P.keys()))
-            return {move: p / prob_sum for move, p in root.P.items()}
+                return self._uniform_pi_dist(list(root.moves))
+            return {
+                move: float(prob / prob_sum)
+                for move, prob in zip(root.moves, root.priors)
+            }
 
-        return {move: count / total for move, count in root.N.items()}
+        return {
+            move: float(count / total)
+            for move, count in zip(root.moves, root.visits)
+            if count > 0.0
+        }
 
     def _dist_to_vector(self, pi_dist, board):
         """
@@ -437,11 +445,30 @@ class DataCollector:
 
         path = os.path.join(self.buffer_path, filename)
         saver = np.savez_compressed if PROFILE.replay_compress else np.savez
-        saver(
-            path,
-            states=np.array([g["state"] for g in game_data], dtype=np.float32),
-            pis=np.array([g["pi"] for g in game_data], dtype=np.float32),
-            zs=np.array([g["z"] for g in game_data], dtype=np.float32),
-            encoder_version=np.int32(REPLAY_ENCODER_VERSION),
-            runtime_profile=np.array(PROFILE.name),
-        )
+        payload = {
+            "states": np.array([g["state"] for g in game_data], dtype=np.float32),
+            "pis": np.array([g["pi"] for g in game_data], dtype=np.float32),
+            "zs": np.array([g["z"] for g in game_data], dtype=np.float32),
+            "encoder_version": np.int32(REPLAY_ENCODER_VERSION),
+            "runtime_profile": np.array(PROFILE.name),
+        }
+        try:
+            saver(path, **payload)
+        except OSError as exc:
+            if exc.errno != errno.ENOSPC:
+                raise
+            self._prune_oldest_replay_files()
+            saver(path, **payload)
+
+    def _prune_oldest_replay_files(self, max_remove=24):
+        replay_files = []
+        for entry in os.scandir(self.buffer_path):
+            if entry.is_file() and entry.name.endswith(".npz"):
+                replay_files.append((entry.stat().st_mtime, entry.path))
+
+        replay_files.sort()
+        for _, path in replay_files[:max_remove]:
+            try:
+                os.remove(path)
+            except OSError:
+                continue

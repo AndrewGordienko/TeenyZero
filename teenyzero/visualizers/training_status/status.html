@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeenyZero | Training</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='common/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='training_status/status.css') }}">
+</head>
+<body>
+    <main class="shell">
+        <header class="page-hero">
+            <div class="hero-copy">
+                <div class="eyebrow">TeenyZero</div>
+                <h1>Training Status</h1>
+                <p class="subtitle">Continuous trainer state, replay buffer progress, and latest loss metrics.</p>
+            </div>
+            <div class="hero-actions">
+                <button id="reset-training" class="action-button reset-button" type="button">Reset Training</button>
+                <a class="home-link" href="/">Back to Hub</a>
+            </div>
+        </header>
+
+        <section id="summary" class="metric-strip summary-strip"></section>
+
+        <section id="progress" class="progress-grid"></section>
+
+        <section class="insight-grid">
+            <section class="panel">
+                <h2 class="section-title">Cycle Pipeline</h2>
+                <div id="stage-cards" class="info-grid"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Training Throughput</h2>
+                <div id="throughput-cards" class="info-grid"></div>
+            </section>
+        </section>
+
+        <section class="chart-grid">
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Loss Curves</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--blue"></i>Total</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--ink"></i>Policy</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--green"></i>Value</span>
+                    </div>
+                </div>
+                <svg id="loss-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Cycle Stage Breakdown</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--blue"></i>Scan</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--gold"></i>Window</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--ink"></i>Train</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--green"></i>Checkpoint</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--rose"></i>Prune</span>
+                    </div>
+                </div>
+                <svg id="duration-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Samples Per Second</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--blue"></i>Throughput</span>
+                    </div>
+                </div>
+                <svg id="throughput-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Average Batch Time</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--ink"></i>Latency</span>
+                    </div>
+                </div>
+                <svg id="batch-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+        </section>
+
+        <section class="panel">
+            <h2 class="section-title">Operational Overview</h2>
+            <div id="details" class="detail-sections"></div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='training_status/status.js') }}"></script>
+</body>
+</html>

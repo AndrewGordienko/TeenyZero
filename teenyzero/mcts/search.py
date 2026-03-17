@@ -2,6 +2,7 @@ import math
 import chess
 import threading
 import time
+import numpy as np
 from .node import MCTSNode
 
 
@@ -112,23 +113,32 @@ class MCTS:
     def advance_root(self, root: MCTSNode, move):
         if root is None:
             return None
-        return root.children.get(move)
+        return root.get_child(move)
 
     def _finalize_root(self, root: MCTSNode):
         total_visits = float(root.total_n)
 
         if total_visits <= 0:
-            if not root.P:
+            if not root.moves:
                 return None, {}, root
-            best_move = max(root.P, key=root.P.get)
-            return best_move, dict(root.P), root
+            best_idx = int(np.argmax(root.priors))
+            best_move = root.moves[best_idx]
+            return best_move, {
+                move: float(prob)
+                for move, prob in zip(root.moves, root.priors)
+            }, root
 
-        pi_dist = {move: visits / total_visits for move, visits in root.N.items()}
-        best_move = max(root.N, key=root.N.get)
+        pi_dist = {
+            move: float(visits / total_visits)
+            for move, visits in zip(root.moves, root.visits)
+            if visits > 0.0
+        }
+        best_idx = int(np.argmax(root.visits))
+        best_move = root.moves[best_idx]
         return best_move, pi_dist, root
 
     def _add_root_dirichlet_noise(self, root: MCTSNode):
-        if not root.P:
+        if not root.moves:
             return
 
         if getattr(root, "dirichlet_applied", False):
@@ -136,13 +146,10 @@ class MCTS:
 
         import numpy as np
 
-        moves = list(root.P.keys())
         alpha = self.params["ALPHA"]
         eps = self.params["EPS"]
-        noise = np.random.dirichlet([alpha] * len(moves))
-
-        for i, move in enumerate(moves):
-            root.P[move] = (1.0 - eps) * root.P[move] + eps * float(noise[i])
+        noise = np.random.dirichlet([alpha] * len(root.moves)).astype(np.float32)
+        root.priors = ((1.0 - eps) * root.priors + eps * noise).astype(np.float32, copy=False)
 
         root.dirichlet_applied = True
 
@@ -159,34 +166,35 @@ class MCTS:
         while True:
             if self.use_tree_lock:
                 with self.tree_lock:
-                    move = self._select_child(node)
-                    if move is None:
+                    move_idx = self._select_child(node)
+                    if move_idx is None:
                         return None
 
-                    path.append((node, move))
+                    path.append((node, move_idx))
 
                     if self.v_loss != 0.0:
-                        node.N[move] += self.v_loss
-                        node.W[move] -= self.v_loss
+                        node.visits[move_idx] += self.v_loss
+                        node.value_sums[move_idx] -= self.v_loss
                         node.total_n += self.v_loss
                         node.total_w -= self.v_loss
 
-                    child = node.children.get(move)
+                    child = node.children[move_idx]
             else:
-                move = self._select_child(node)
-                if move is None:
+                move_idx = self._select_child(node)
+                if move_idx is None:
                     return None
 
-                path.append((node, move))
+                path.append((node, move_idx))
 
                 if self.v_loss != 0.0:
-                    node.N[move] += self.v_loss
-                    node.W[move] -= self.v_loss
+                    node.visits[move_idx] += self.v_loss
+                    node.value_sums[move_idx] -= self.v_loss
                     node.total_n += self.v_loss
                     node.total_w -= self.v_loss
 
-                child = node.children.get(move)
+                child = node.children[move_idx]
 
+            move = node.moves[move_idx]
             board.push(move)
 
             if child is None:
@@ -198,7 +206,7 @@ class MCTS:
             "path": path,
             "board": board,
             "parent_node": node,
-            "leaf_move": move,
+            "leaf_index": move_idx,
             "is_terminal": board.is_game_over(claim_draw=True),
             "priors": None,
             "value": None,
@@ -239,43 +247,43 @@ class MCTS:
         Expands the leaf and backprops the value.
         """
         parent_node = item["parent_node"]
-        leaf_move = item["leaf_move"]
+        leaf_index = item["leaf_index"]
         value = item["value"]
 
         if not item["is_terminal"]:
             priors = item["priors"]
             if self.use_tree_lock:
                 with self.tree_lock:
-                    if leaf_move not in parent_node.children:
-                        parent_node.children[leaf_move] = MCTSNode(priors)
+                    if parent_node.children[leaf_index] is None:
+                        parent_node.children[leaf_index] = MCTSNode(priors)
             else:
-                if leaf_move not in parent_node.children:
-                    parent_node.children[leaf_move] = MCTSNode(priors)
+                if parent_node.children[leaf_index] is None:
+                    parent_node.children[leaf_index] = MCTSNode(priors)
 
         if self.use_tree_lock:
             with self.tree_lock:
-                for n, m in reversed(item["path"]):
+                for n, idx in reversed(item["path"]):
                     if self.v_loss != 0.0:
-                        n.N[m] = n.N[m] - self.v_loss + 1
-                        n.W[m] = n.W[m] + self.v_loss + value
+                        n.visits[idx] = n.visits[idx] - self.v_loss + 1
+                        n.value_sums[idx] = n.value_sums[idx] + self.v_loss + value
                         n.total_n = n.total_n - self.v_loss + 1
                         n.total_w = n.total_w + self.v_loss + value
                     else:
-                        n.N[m] += 1
-                        n.W[m] += value
+                        n.visits[idx] += 1
+                        n.value_sums[idx] += value
                         n.total_n += 1
                         n.total_w += value
                     value = -value
         else:
-            for n, m in reversed(item["path"]):
+            for n, idx in reversed(item["path"]):
                 if self.v_loss != 0.0:
-                    n.N[m] = n.N[m] - self.v_loss + 1
-                    n.W[m] = n.W[m] + self.v_loss + value
+                    n.visits[idx] = n.visits[idx] - self.v_loss + 1
+                    n.value_sums[idx] = n.value_sums[idx] + self.v_loss + value
                     n.total_n = n.total_n - self.v_loss + 1
                     n.total_w = n.total_w + self.v_loss + value
                 else:
-                    n.N[m] += 1
-                    n.W[m] += value
+                    n.visits[idx] += 1
+                    n.value_sums[idx] += value
                     n.total_n += 1
                     n.total_w += value
                 value = -value
@@ -284,7 +292,7 @@ class MCTS:
         """
         PUCT + FPU.
         """
-        if not node.P:
+        if not node.moves:
             return None
 
         total_n = node.total_n
@@ -295,19 +303,22 @@ class MCTS:
         fpu_value = parent_q - self.params["FPU_REDUCTION"]
 
         best_score = -float("inf")
-        best_move = None
+        best_idx = None
+        priors = node.priors
+        visits = node.visits
+        value_sums = node.value_sums
 
-        for move, prior in node.P.items():
-            n = node.N[move]
-            q = (node.W[move] / n) if n > 0 else fpu_value
-            u = self.c_puct * prior * total_n_sqrt / (1.0 + n)
+        for idx in range(len(priors)):
+            n = float(visits[idx])
+            q = (float(value_sums[idx]) / n) if n > 0 else fpu_value
+            u = self.c_puct * float(priors[idx]) * total_n_sqrt / (1.0 + n)
             score = q + u
 
             if score > best_score:
                 best_score = score
-                best_move = move
+                best_idx = idx
 
-        return best_move
+        return best_idx
 
     def _terminal_value(self, board: chess.Board):
         """

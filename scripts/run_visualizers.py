@@ -3,7 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from teenyzero.alphazero.runtime import get_runtime_profile
+from teenyzero.runtime_bootstrap import bootstrap_runtime_cli
+
+
+bootstrap_runtime_cli()
+
+from teenyzero.alphazero.runtime import get_runtime_selection
 from teenyzero.visualizers.app import app
 
 
@@ -18,27 +23,28 @@ def _project_root() -> Path:
 
 
 if __name__ == "__main__":
-    profile = get_runtime_profile()
+    runtime = get_runtime_selection()
+    profile = runtime.profile
     actor_process = None
     trainer_process = None
     arena_process = None
 
-    print(f"[*] Launching TeenyZero dashboard stack with runtime profile: {profile.name}")
+    print(f"[*] Launching TeenyZero dashboard stack with runtime profile: {profile.name} on {runtime.device}")
 
     if not _port_in_use(5002):
-        run_actors = _project_root() / "scripts" / "selfplay" / "run_factory.py"
+        run_actors = _project_root() / "scripts" / "run_actors.py"
         actor_process = subprocess.Popen(
             [sys.executable, str(run_actors)],
             cwd=str(_project_root()),
         )
 
-    run_trainer = _project_root() / "scripts" / "training" / "run_loop.py"
+    run_trainer = _project_root() / "scripts" / "train.py"
     trainer_process = subprocess.Popen(
         [sys.executable, str(run_trainer)],
         cwd=str(_project_root()),
     )
 
-    run_arena = _project_root() / "scripts" / "eval" / "run_arena.py"
+    run_arena = _project_root() / "scripts" / "run_arena.py"
     arena_process = subprocess.Popen(
         [sys.executable, str(run_arena)],
         cwd=str(_project_root()),

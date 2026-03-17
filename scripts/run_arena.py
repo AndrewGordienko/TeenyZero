@@ -7,31 +7,37 @@ import subprocess
 import time
 from pathlib import Path
 
+from teenyzero.runtime_bootstrap import bootstrap_runtime_cli
+
+
+bootstrap_runtime_cli()
+
 import chess
 import chess.engine
-import torch
 
 from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
-from teenyzero.alphazero.runtime import get_runtime_profile, runtime_profile_payload
+from teenyzero.alphazero.runtime import get_runtime_profile, get_runtime_selection, runtime_profile_payload
+from teenyzero.alphazero.search_session import SearchSession
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.mcts.search import MCTS
+from teenyzero.paths import (
+    ARENA_HISTORY_PATH,
+    ARENA_LOCK_PATH,
+    ARENA_MATCHES_PATH,
+    ARENA_STATE_PATH,
+    BEST_MODEL_PATH,
+    LATEST_MODEL_PATH,
+    MODEL_ARCHIVE_PATH,
+    TRAINING_STATE_PATH,
+    ensure_runtime_dirs,
+    runtime_paths_payload,
+)
 
 
-PROFILE = get_runtime_profile()
+RUNTIME = get_runtime_selection()
+PROFILE = RUNTIME.profile
 PROFILE_SETTINGS = runtime_profile_payload(PROFILE)
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "teenyzero" / "alphazero" / "data"
-TRAINING_STATE_PATH = DATA_DIR / "training_state.json"
-ARENA_STATE_PATH = DATA_DIR / "arena_state.json"
-ARENA_HISTORY_PATH = DATA_DIR / "arena_history.json"
-ARENA_MATCHES_PATH = DATA_DIR / "arena_matches.json"
-ARENA_LOCK_PATH = DATA_DIR / "arena.lock"
-MODELS_DIR = PROJECT_ROOT / "models"
-BEST_MODEL_PATH = MODELS_DIR / "best_model.pth"
-LATEST_MODEL_PATH = MODELS_DIR / "latest_model.pth"
-ARCHIVE_DIR = MODELS_DIR / "archive"
 
 PROMOTION_GAMES = PROFILE.arena_promotion_games
 PROMOTION_THRESHOLD = PROFILE.arena_promotion_threshold
@@ -41,6 +47,9 @@ ARENA_SIMULATIONS = PROFILE.arena_simulations
 POLL_INTERVAL_S = 15.0
 ELO_K = 24.0
 DEFAULT_RATING = 1000.0
+ARCHIVE_DIR = MODEL_ARCHIVE_PATH
+MAX_CYCLE_ARCHIVES = max(1, int(os.environ.get("TEENYZERO_MAX_CYCLE_ARCHIVES", "2")))
+MAX_CHAMPION_ARCHIVES = max(1, int(os.environ.get("TEENYZERO_MAX_CHAMPION_ARCHIVES", "3")))
 
 
 OPENING_BOOK = [
@@ -98,6 +107,7 @@ def _default_arena_state():
         "promotion_threshold": PROMOTION_THRESHOLD,
         "runtime_profile": PROFILE.name,
         "runtime_profile_settings": PROFILE_SETTINGS,
+        "runtime_paths": runtime_paths_payload(),
         "stockfish_path": os.environ.get("TEENYZERO_STOCKFISH_PATH", ""),
         "stockfish_available": False,
         "latest_match": None,
@@ -174,6 +184,18 @@ def _archive_model(src: Path, cycle: int, label="cycle"):
     return dst
 
 
+def _prune_archives(label: str, keep: int):
+    if keep <= 0 or not ARCHIVE_DIR.exists():
+        return []
+    paths = sorted(ARCHIVE_DIR.glob(f"{label}_*.pth"))
+    removed = []
+    while len(paths) > keep:
+        oldest = paths.pop(0)
+        oldest.unlink(missing_ok=True)
+        removed.append(str(oldest))
+    return removed
+
+
 def _recent_archived_champions(current_champion_archive_path, limit=3):
     if not ARCHIVE_DIR.exists():
         return []
@@ -206,12 +228,14 @@ class TeenyZeroAgent:
                 "LEAF_BATCH_SIZE": 8,
             },
         )
+        self.session = SearchSession(self.engine)
 
     def choose_move(self, board: chess.Board):
-        move, _, _ = self.engine.search(board, is_training=False)
+        move, _, _ = self.session.search(board, is_training=False)
         return move
 
     def close(self):
+        self.session.reset()
         return None
 
 
@@ -400,12 +424,15 @@ def main():
         return
 
     atexit.register(_release_lock)
-    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    ensure_runtime_dirs()
+    device = RUNTIME.device
     stockfish_path = os.environ.get("TEENYZERO_STOCKFISH_PATH", "").strip()
     state = _default_arena_state()
     state.update(_load_json(ARENA_STATE_PATH, {}))
+    state["device"] = device
     state["runtime_profile"] = PROFILE.name
     state["runtime_profile_settings"] = PROFILE_SETTINGS
+    state["runtime_paths"] = runtime_paths_payload()
     state["stockfish_path"] = stockfish_path
     state["stockfish_available"] = bool(_stockfish_opponents(stockfish_path))
     _write_json(ARENA_STATE_PATH, state)
@@ -532,6 +559,8 @@ def main():
                     }
                 )
 
+            removed_cycle_archives = _prune_archives("cycle", MAX_CYCLE_ARCHIVES)
+            removed_champion_archives = _prune_archives("champion", MAX_CHAMPION_ARCHIVES)
             ratings[champion_id] = champion_rating
             state.update(
                 {
@@ -550,6 +579,8 @@ def main():
                     "external_results": external_results + recent_champions,
                     "stockfish_available": bool(_stockfish_opponents(stockfish_path)),
                     "champion_archive_path": champion_archive_path,
+                    "removed_cycle_archives": len(removed_cycle_archives),
+                    "removed_champion_archives": len(removed_champion_archives),
                     "last_error": None,
                 }
             )

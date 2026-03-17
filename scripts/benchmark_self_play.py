@@ -3,18 +3,24 @@ import multiprocessing as mp
 import os
 import time
 
+from teenyzero.runtime_bootstrap import bootstrap_runtime_cli
+
+
+bootstrap_runtime_cli()
+
 import chess
 import numpy as np
-import torch
 
 from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, save_checkpoint
-from teenyzero.alphazero.runtime import get_runtime_profile
+from teenyzero.alphazero.runtime import get_runtime_selection
 from teenyzero.alphazero.servers.inference import inference_worker
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.mcts.search import MCTS
+from teenyzero.paths import BEST_MODEL_PATH, ensure_runtime_dirs
 
 
-PROFILE = get_runtime_profile()
+RUNTIME = get_runtime_selection()
+PROFILE = RUNTIME.profile
 
 
 def benchmark_fens():
@@ -120,20 +126,11 @@ def main():
     parser.add_argument("--searches-per-worker", type=int, default=12)
     parser.add_argument("--simulations", type=int, default=PROFILE.selfplay_simulations)
     parser.add_argument("--leaf-batch-size", type=int, default=PROFILE.selfplay_leaf_batch_size)
-    parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     args = parser.parse_args()
 
-    device = args.device
-    if device == "auto":
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    model_path = os.path.join(project_root, "models", "best_model.pth")
+    device = RUNTIME.device
+    ensure_runtime_dirs()
+    model_path = str(BEST_MODEL_PATH)
     bootstrap_model(model_path)
 
     base_fens = benchmark_fens()
@@ -189,6 +186,7 @@ def main():
 
     print("\nTeenyZero Benchmark")
     print(f"Device: {device}")
+    print(f"Profile: {PROFILE.name}")
     print(f"Workers: {args.workers}")
     print(f"Searches per worker: {args.searches_per_worker}")
     print(f"Simulations: {args.simulations}")
