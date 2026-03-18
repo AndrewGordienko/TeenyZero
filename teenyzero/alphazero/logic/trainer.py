@@ -542,6 +542,10 @@ def dataloader_for_replay_window(
         rng_seed=rng_seed,
         progress_callback=progress_callback,
     )
+    # The replay window is fully indexed/built during dataset construction.
+    # Clearing the callback here avoids pickling nested/local functions when
+    # DataLoader workers are spawned on macOS/Python 3.11.
+    dataset.progress_callback = None
     effective_num_workers = PROFILE.train_num_workers if num_workers is None else num_workers
     effective_pin_memory = PROFILE.train_pin_memory if pin_memory is None else pin_memory
     effective_prefetch = PROFILE.train_prefetch_factor if prefetch_factor is None else prefetch_factor

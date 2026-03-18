@@ -20,10 +20,18 @@ def index():
 
 @app.route("/api/stats")
 def get_stats():
-    normalized = {
-        str(key): value
-        for key, value in dict(shared_stats).items()
-    }
+    try:
+        normalized = {
+            str(key): value
+            for key, value in dict(shared_stats).items()
+        }
+    except (BrokenPipeError, EOFError, OSError):
+        normalized = {
+            "__cluster__": {
+                "status": "disconnected",
+                "message": "self-play telemetry source is unavailable; restart scripts/run_actors.py or scripts/run_visualizers.py",
+            }
+        }
     return jsonify(normalized)
 
 
