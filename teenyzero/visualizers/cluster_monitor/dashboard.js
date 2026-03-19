@@ -30,10 +30,24 @@ function pct(value) {
 }
 
 function safeWorkers(data) {
+    const sortParts = (id) => String(id).split(":").map((part) => {
+        const value = Number(part);
+        return Number.isFinite(value) ? value : 0;
+    });
+    const compareIds = (left, right) => {
+        const leftParts = sortParts(left);
+        const rightParts = sortParts(right);
+        const limit = Math.max(leftParts.length, rightParts.length);
+        for (let index = 0; index < limit; index += 1) {
+            const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
+            if (delta !== 0) return delta;
+        }
+        return String(left).localeCompare(String(right));
+    };
     return Object.entries(data)
         .filter(([key]) => key !== "__cluster__")
         .map(([id, stats]) => ({ id, ...stats }))
-        .sort((a, b) => Number(a.id) - Number(b.id));
+        .sort((a, b) => compareIds(a.id, b.id));
 }
 
 function aggregateWorkers(workers) {
@@ -133,11 +147,15 @@ function renderHeroResults(clusterTotals) {
 
 function renderSummary(workers, cluster, aggregate, combinedTiming, clusterTotals) {
     const target = document.getElementById("summary");
+    const actorMode = String(cluster.config?.actor_mode || "");
+    const moveNote = actorMode === "inprocess"
+        ? "per-game average across active concurrent slots"
+        : "average end-to-end move time";
     const cards = [
         {
             label: "Move Total",
             value: `${fmtNumber(aggregate.avgTotalMs)} ms`,
-            note: "average end-to-end move time",
+            note: moveNote,
         },
         {
             label: "Leaf Eval",
@@ -206,18 +224,24 @@ function renderBoard(fen) {
 function workerFrontMarkup(worker) {
     const search = worker.search || {};
     const last = search.last_ms || {};
+    const isSlot = String(worker.id).includes(":");
+    const slotId = isSlot ? String(worker.id).split(":").slice(-1)[0] : worker.id;
+    const label = isSlot ? `Slot ${slotId}` : `Worker ${worker.id}`;
     return `
         <div class="worker-top">
             <div class="worker-meta">
-                <div class="worker-id-tag">Worker ${worker.id}</div>
+                <div class="worker-id-tag">${label}</div>
             </div>
         </div>
 
         <div class="kv">
+            <div class="kv-item"><span class="k">Move Count</span><span class="v">${fmtInt(worker.move_count)}</span></div>
+            <div class="kv-item"><span class="k">Turn Number</span><span class="v">${fmtInt(worker.turn_number)}</span></div>
             <div class="kv-item"><span class="k">Games Played</span><span class="v">${fmtInt(worker.total_games)}</span></div>
             <div class="kv-item"><span class="k">Positions Saved</span><span class="v">${fmtInt(worker.total_positions_saved)}</span></div>
             <div class="kv-item"><span class="k">Avg Move Time</span><span class="v">${fmtNumber(search.avg_ms?.total || 0)} ms</span></div>
             <div class="kv-item"><span class="k">Last Move Time</span><span class="v">${fmtNumber(last.total || 0)} ms</span></div>
+            <div class="kv-item"><span class="k">Batch Active Games</span><span class="v">${fmtInt(search.batch_active_games || 1)}</span></div>
             <div class="kv-item"><span class="k">Inference Wait</span><span class="v">${fmtNumber(search.avg_ms?.inference_wait || 0)} ms</span></div>
             <div class="kv-item"><span class="k">Model Forward</span><span class="v">${fmtNumber(search.avg_ms?.inference_forward || 0)} ms</span></div>
             <div class="kv-item"><span class="k">Legal Moves</span><span class="v">${fmtInt(worker.legal_moves)}</span></div>
@@ -231,10 +255,13 @@ function workerFrontMarkup(worker) {
 }
 
 function workerBackMarkup(worker) {
+    const isSlot = String(worker.id).includes(":");
+    const slotId = isSlot ? String(worker.id).split(":").slice(-1)[0] : worker.id;
+    const label = isSlot ? `Slot ${slotId}` : `Worker ${worker.id}`;
     return `
         <div class="worker-top">
             <div class="worker-meta">
-                <div class="worker-id-tag">Worker ${worker.id}</div>
+                <div class="worker-id-tag">${label}</div>
             </div>
         </div>
 
@@ -328,4 +355,3 @@ async function update() {
 
 update();
 setInterval(update, 1000);
-

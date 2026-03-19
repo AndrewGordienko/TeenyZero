@@ -420,6 +420,7 @@ class DataCollector:
             "search": {
                 "simulations_requested": int(search_profile.get("simulations_requested", 0)) if search_profile else 0,
                 "simulations_completed": int(search_profile.get("simulations_completed", 0)) if search_profile else 0,
+                "batch_active_games": int(search_profile.get("batch_active_games", 1)) if search_profile else 1,
                 "leaf_batches": int(search_profile.get("leaf_batches", 0)) if search_profile else 0,
                 "terminal_leaves": int(search_profile.get("terminal_leaves", 0)) if search_profile else 0,
                 "last_ms": {
