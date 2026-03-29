@@ -214,6 +214,9 @@ if __name__ == "__main__":
     worker_count = args.workers if args.workers is not None else (env_workers if env_workers is not None else default_workers)
     dashboard_enabled = not args.no_dashboard
     actor_mode = args.actor_mode
+    env_actor_mode = os.environ.get("TEENYZERO_ACTOR_MODE", "").strip().lower()
+    if actor_mode == "auto" and env_actor_mode in {"inprocess", "mp"}:
+        actor_mode = env_actor_mode
     if actor_mode == "auto":
         actor_mode = "inprocess" if DEVICE in {"cuda", "mps"} else "mp"
 

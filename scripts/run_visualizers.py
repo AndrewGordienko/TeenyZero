@@ -29,6 +29,12 @@ if __name__ == "__main__":
     parser.add_argument("--no-actors", action="store_true", help="Do not start the self-play actor process.")
     parser.add_argument("--no-trainer", action="store_true", help="Do not start the trainer process.")
     parser.add_argument("--no-arena", action="store_true", help="Do not start the arena process.")
+    parser.add_argument(
+        "--actor-mode",
+        choices=["auto", "inprocess", "mp"],
+        default=None,
+        help="Override the self-play execution model used by run_actors.py.",
+    )
     parser.add_argument("--actor-workers", type=int, default=None, help="Override self-play concurrent games/workers.")
     parser.add_argument("--selfplay-simulations", type=int, default=None, help="Override self-play simulations per move.")
     parser.add_argument(
@@ -39,6 +45,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--train-batch-size", type=int, default=None, help="Override trainer batch size.")
     parser.add_argument("--train-num-workers", type=int, default=None, help="Override trainer DataLoader worker count.")
+    parser.add_argument(
+        "--train-precision",
+        choices=["fp32", "fp16", "bf16"],
+        default=None,
+        help="Override trainer precision mode.",
+    )
+    parser.add_argument("--train-compile", action="store_true", help="Enable trainer torch.compile mode.")
+    parser.add_argument("--no-train-compile", action="store_true", help="Disable trainer torch.compile mode.")
+    parser.add_argument("--train-pin-memory", action="store_true", help="Enable trainer DataLoader pin memory.")
+    parser.add_argument("--no-train-pin-memory", action="store_true", help="Disable trainer DataLoader pin memory.")
     parser.add_argument("--stockfish-path", default=None, help="Path to a Stockfish binary for arena anchor matches.")
     parser.add_argument("--promotion-games", type=int, default=None, help="Override arena promotion games.")
     parser.add_argument("--baseline-games", type=int, default=None, help="Override arena baseline games per opponent.")
@@ -56,6 +72,8 @@ if __name__ == "__main__":
         os.environ["TEENYZERO_PLAY_SIMULATIONS"] = str(max(1, int(args.play_simulations)))
     if args.actor_workers is not None:
         os.environ["TEENYZERO_SELFPLAY_WORKERS"] = str(max(1, int(args.actor_workers)))
+    if args.actor_mode is not None:
+        os.environ["TEENYZERO_ACTOR_MODE"] = str(args.actor_mode)
     if args.selfplay_simulations is not None:
         os.environ["TEENYZERO_SELFPLAY_SIMULATIONS"] = str(max(1, int(args.selfplay_simulations)))
     if args.selfplay_leaf_batch_size is not None:
@@ -64,6 +82,16 @@ if __name__ == "__main__":
         os.environ["TEENYZERO_TRAIN_BATCH_SIZE"] = str(max(1, int(args.train_batch_size)))
     if args.train_num_workers is not None:
         os.environ["TEENYZERO_TRAIN_NUM_WORKERS"] = str(max(0, int(args.train_num_workers)))
+    if args.train_precision is not None:
+        os.environ["TEENYZERO_TRAIN_PRECISION"] = str(args.train_precision)
+    if args.train_compile:
+        os.environ["TEENYZERO_TRAIN_COMPILE"] = "1"
+    if args.no_train_compile:
+        os.environ["TEENYZERO_TRAIN_COMPILE"] = "0"
+    if args.train_pin_memory:
+        os.environ["TEENYZERO_TRAIN_PIN_MEMORY"] = "1"
+    if args.no_train_pin_memory:
+        os.environ["TEENYZERO_TRAIN_PIN_MEMORY"] = "0"
     if args.stockfish_path:
         os.environ["TEENYZERO_STOCKFISH_PATH"] = str(args.stockfish_path)
     if args.promotion_games is not None:

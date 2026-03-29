@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeenyZero | Autotune</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='common/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='autotune/status.css') }}">
+</head>
+<body>
+    <main class="shell">
+        <header class="page-hero">
+            <div class="hero-copy">
+                <div class="eyebrow">TeenyZero</div>
+                <h1>Autotune Phase 1</h1>
+                <p class="subtitle">Hardware/runtime search for self-play and trainer throughput. Run <span class="mono">python3 scripts/autotune.py</span>, then inspect the best config here.</p>
+            </div>
+            <div class="hero-actions">
+                <a class="home-link" href="/">Back to Hub</a>
+            </div>
+        </header>
+
+        <section id="summary" class="metric-strip summary-strip"></section>
+
+        <section class="overview-grid">
+            <section class="panel">
+                <div class="panel-header">
+                    <h2 class="section-title">Best Trial</h2>
+                    <span id="best-badge" class="status-pill">Idle</span>
+                </div>
+                <div id="best-trial" class="detail-list detail-list--stacked"></div>
+                <div class="command-block">
+                    <div class="command-label">Apply Command</div>
+                    <pre id="apply-command" class="command-value mono">No phase 1 run has been recorded yet.</pre>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h2 class="section-title">Recent Runs</h2>
+                    <span id="recent-count" class="detail-key">0 runs</span>
+                </div>
+                <div id="recent-runs" class="detail-list"></div>
+            </section>
+        </section>
+
+        <section class="chart-grid">
+            <section class="panel chart-card">
+                <h2 class="section-title">Trial Score</h2>
+                <svg id="score-chart" class="chart" viewBox="0 0 520 220" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <h2 class="section-title">Self-Play vs Train Throughput</h2>
+                <svg id="tradeoff-chart" class="chart" viewBox="0 0 520 220" preserveAspectRatio="none"></svg>
+            </section>
+        </section>
+
+        <section class="data-grid">
+            <section class="panel">
+                <h2 class="section-title">Hardware Fingerprint</h2>
+                <div id="hardware" class="detail-list detail-list--stacked"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Search Settings</h2>
+                <div id="search-settings" class="detail-list detail-list--stacked"></div>
+            </section>
+        </section>
+
+        <section class="panel shared-panel">
+            <div class="panel-header">
+                <h2 class="section-title">Known Recommendations</h2>
+                <span id="recommendation-count" class="detail-key">0 promoted</span>
+            </div>
+            <div id="recommendations" class="trial-list"></div>
+        </section>
+
+        <section class="panel trials-panel">
+            <div class="panel-header">
+                <h2 class="section-title">Trial Table</h2>
+                <span class="detail-key">Ranked by current phase 1 objective</span>
+            </div>
+            <div id="trials" class="trial-list"></div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='autotune/status.js') }}"></script>
+</body>
+</html>

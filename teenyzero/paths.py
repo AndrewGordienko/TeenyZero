@@ -15,6 +15,9 @@ MODELS_DIR = RUNTIME_ROOT / "models"
 BEST_MODEL_PATH = MODELS_DIR / "best_model.pth"
 LATEST_MODEL_PATH = MODELS_DIR / "latest_model.pth"
 REPLAY_BUFFER_PATH = DATA_DIR / "replay_buffer"
+AUTOTUNE_DIR = DATA_DIR / "autotune"
+AUTOTUNE_RUNS_DIR = AUTOTUNE_DIR / "runs"
+AUTOTUNE_LATEST_PATH = AUTOTUNE_DIR / "phase1_latest.json"
 TRAINING_STATE_PATH = DATA_DIR / "training_state.json"
 TRAINING_HISTORY_PATH = DATA_DIR / "training_history.json"
 TRAINER_LOCK_PATH = DATA_DIR / "trainer.lock"
@@ -80,6 +83,7 @@ def ensure_runtime_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     REPLAY_BUFFER_PATH.mkdir(parents=True, exist_ok=True)
+    AUTOTUNE_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_ARCHIVE_PATH.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_checkpoint(LEGACY_BEST_MODEL_PATH, BEST_MODEL_PATH)
     _migrate_legacy_checkpoint(LEGACY_LATEST_MODEL_PATH, LATEST_MODEL_PATH)
@@ -92,6 +96,9 @@ def runtime_paths_payload():
         "data_dir": str(DATA_DIR),
         "models_dir": str(MODELS_DIR),
         "replay_buffer_path": str(REPLAY_BUFFER_PATH),
+        "autotune_dir": str(AUTOTUNE_DIR),
+        "autotune_runs_dir": str(AUTOTUNE_RUNS_DIR),
+        "autotune_latest_path": str(AUTOTUNE_LATEST_PATH),
         "training_state_path": str(TRAINING_STATE_PATH),
         "training_history_path": str(TRAINING_HISTORY_PATH),
         "arena_state_path": str(ARENA_STATE_PATH),

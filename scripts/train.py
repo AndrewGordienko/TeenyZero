@@ -57,6 +57,22 @@ def _env_int(name, default, minimum=1):
     return int(default)
 
 
+def _env_bool(name, default):
+    raw_value = os.environ.get(name, "").strip().lower()
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _env_choice(name, default, allowed):
+    raw_value = os.environ.get(name, "").strip().lower()
+    if raw_value in allowed:
+        return raw_value
+    return str(default).lower()
+
+
 MIN_SAMPLES_READY = PROFILE.min_samples_ready
 TRAIN_INCREMENT = PROFILE.train_increment
 REPLAY_WINDOW_SAMPLES = PROFILE.replay_window_samples
@@ -65,6 +81,9 @@ BOOTSTRAP_WINDOW_SAMPLES = PROFILE.bootstrap_window_samples
 MAX_RETAINED_SAMPLES = PROFILE.max_retained_samples
 BATCH_SIZE = _env_int("TEENYZERO_TRAIN_BATCH_SIZE", PROFILE.train_batch_size)
 TRAIN_NUM_WORKERS = _env_int("TEENYZERO_TRAIN_NUM_WORKERS", PROFILE.train_num_workers, minimum=0)
+TRAIN_PIN_MEMORY = _env_bool("TEENYZERO_TRAIN_PIN_MEMORY", PROFILE.train_pin_memory)
+TRAIN_PRECISION = _env_choice("TEENYZERO_TRAIN_PRECISION", PROFILE.train_precision, {"fp32", "fp16", "bf16"})
+TRAIN_COMPILE = _env_bool("TEENYZERO_TRAIN_COMPILE", PROFILE.train_compile)
 EPOCHS_PER_CYCLE = PROFILE.train_epochs_per_cycle
 POLL_INTERVAL_S = PROFILE.train_poll_interval_s
 
@@ -127,6 +146,9 @@ def _state_defaults():
         "runtime_profile_settings": PROFILE_SETTINGS,
         "train_batch_size": BATCH_SIZE,
         "train_num_workers": TRAIN_NUM_WORKERS,
+        "train_pin_memory": TRAIN_PIN_MEMORY,
+        "train_precision": TRAIN_PRECISION,
+        "train_compile": TRAIN_COMPILE,
         "runtime_paths": runtime_paths_payload(),
         "training_history_path": TRAINING_HISTORY_PATH,
     }
@@ -323,8 +345,8 @@ def main():
         weight_decay=PROFILE.train_weight_decay,
         momentum=PROFILE.train_momentum,
         grad_accum_steps=PROFILE.train_grad_accum_steps,
-        precision=PROFILE.train_precision,
-        use_compile=PROFILE.train_compile,
+        precision=TRAIN_PRECISION,
+        use_compile=TRAIN_COMPILE,
         max_grad_norm=PROFILE.max_grad_norm,
     )
     state = _load_training_state()
@@ -333,6 +355,9 @@ def main():
     state["runtime_profile_settings"] = PROFILE_SETTINGS
     state["train_batch_size"] = BATCH_SIZE
     state["train_num_workers"] = TRAIN_NUM_WORKERS
+    state["train_pin_memory"] = TRAIN_PIN_MEMORY
+    state["train_precision"] = TRAIN_PRECISION
+    state["train_compile"] = TRAIN_COMPILE
     state["runtime_paths"] = runtime_paths_payload()
     state["training_history_path"] = TRAINING_HISTORY_PATH
     _write_training_state(state)
@@ -430,7 +455,7 @@ def main():
             progress_callback=on_window_progress,
             rng_seed=int(time.time() * 1000) & 0xFFFFFFFF,
             num_workers=TRAIN_NUM_WORKERS,
-            pin_memory=PROFILE.train_pin_memory,
+            pin_memory=TRAIN_PIN_MEMORY,
             prefetch_factor=PROFILE.train_prefetch_factor,
         )
         window_build_duration_s = time.perf_counter() - window_started

@@ -1,4 +1,5 @@
 import argparse
+import json
 import multiprocessing as mp
 import os
 import time
@@ -128,6 +129,33 @@ def summarize(values):
     }
 
 
+def build_result_payload(args, actor_mode, elapsed, totals, merged):
+    summary = {
+        "move_total_ms": summarize(merged["total_ms"]),
+        "selection_ms": summarize(merged["selection_ms"]),
+        "leaf_eval_ms": summarize(merged["leaf_eval_ms"]),
+        "backprop_ms": summarize(merged["backprop_ms"]),
+        "inference_wait_ms": summarize(merged["wait_ms"]),
+        "inference_forward_ms": summarize(merged["forward_ms"]),
+    }
+    return {
+        "benchmark": "selfplay",
+        "device": RUNTIME.device,
+        "profile": PROFILE.name,
+        "mode": actor_mode,
+        "workers": int(args.workers),
+        "searches_per_worker": int(args.searches_per_worker),
+        "simulations": int(args.simulations),
+        "leaf_batch_size": int(args.leaf_batch_size),
+        "duration_s": float(elapsed),
+        "totals": totals,
+        "searches_per_s": float(totals["count"] / max(elapsed, 1e-9)),
+        "simulations_per_s": float(totals["simulations"] / max(elapsed, 1e-9)),
+        "positions_per_s": float(totals["positions"] / max(elapsed, 1e-9)),
+        "summary": summary,
+    }
+
+
 def run_inprocess_benchmark(device, workers, searches_per_worker, simulations, leaf_batch_size):
     model = build_model()
     load_checkpoint(model, LATEST_MODEL_PATH, map_location="cpu", allow_partial=True)
@@ -207,6 +235,7 @@ def main():
         default="auto",
         help="Benchmark the in-process batched self-play path or the legacy mp queue/server path.",
     )
+    parser.add_argument("--json-output", default=None, help="Optional path to write JSON benchmark results.")
     args = parser.parse_args()
 
     device = RUNTIME.device
@@ -280,6 +309,8 @@ def main():
             for key in results[0]["samples"].keys()
         }
 
+    payload = build_result_payload(args, actor_mode, elapsed, totals, merged)
+
     print("\nTeenyZero Benchmark")
     print(f"Device: {device}")
     print(f"Profile: {PROFILE.name}")
@@ -290,9 +321,9 @@ def main():
     print(f"Leaf batch size: {args.leaf_batch_size}")
     print(f"Wall time: {elapsed:.2f}s")
     print(f"Searches: {totals['count']}")
-    print(f"Searches/sec: {totals['count'] / max(elapsed, 1e-9):.2f}")
-    print(f"Simulations/sec: {totals['simulations'] / max(elapsed, 1e-9):.2f}")
-    print(f"Positions/sec: {totals['positions'] / max(elapsed, 1e-9):.2f}")
+    print(f"Searches/sec: {payload['searches_per_s']:.2f}")
+    print(f"Simulations/sec: {payload['simulations_per_s']:.2f}")
+    print(f"Positions/sec: {payload['positions_per_s']:.2f}")
 
     for key, label in (
         ("total_ms", "Move Total"),
@@ -307,6 +338,11 @@ def main():
             f"{label}: mean {stats['mean']:.1f} ms | "
             f"p50 {stats['p50']:.1f} ms | p95 {stats['p95']:.1f} ms"
         )
+
+    if args.json_output:
+        os.makedirs(os.path.dirname(args.json_output), exist_ok=True)
+        with open(args.json_output, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
 
 
 if __name__ == "__main__":

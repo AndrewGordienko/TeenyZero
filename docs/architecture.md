@@ -1,7 +1,7 @@
 # TeenyZero Architecture
 
 This document is the "how the machine fits together" view of TeenyZero.
-If [RUNNING.md](./RUNNING.md) is about getting the system on its feet,
+If [running.md](./running.md) is about getting the system on its feet,
 this file is about understanding the moving parts once it is alive.
 
 TeenyZero is an AlphaZero-style training loop built around a few simple ideas:
