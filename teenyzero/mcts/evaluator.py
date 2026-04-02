@@ -80,6 +80,20 @@ class AlphaZeroEvaluator:
         self._dir_map = self._build_direction_map()
         self.profile = self._empty_profile()
 
+    def _history_signatures(self, board):
+        history_count = max(0, self.history_length - 1)
+        if history_count <= 0:
+            return ()
+        if self.native_speedups is not None and hasattr(board, "_capsule"):
+            packed_moves = self.native_speedups.board_move_stack(board._capsule)
+            if not packed_moves:
+                return ()
+            return tuple(int(value) for value in packed_moves[-history_count:])
+        return tuple(
+            self._move_signature(move)
+            for move in (board.move_stack[-history_count:] if history_count > 0 else ())
+        )
+
     def clear_cache(self):
         self.cache.clear()
         self.encoded_cache.clear()
@@ -520,7 +534,10 @@ class AlphaZeroEvaluator:
         if cached is not None:
             return cached
 
-        legal_moves = tuple(board.legal_moves)
+        if hasattr(board, "_legal_moves_tuple"):
+            legal_moves = board._legal_moves_tuple()
+        else:
+            legal_moves = tuple(board.legal_moves)
         legal_indices = np.fromiter(
             (self.move_to_idx(move, board.turn) for move in legal_moves),
             dtype=np.int32,
@@ -542,11 +559,7 @@ class AlphaZeroEvaluator:
 
     def _position_key(self, board: chess.Board):
         ep_square = int(board.ep_square) if board.ep_square is not None else -1
-        history_count = max(0, self.history_length - 1)
-        history = tuple(
-            self._move_signature(move)
-            for move in (board.move_stack[-history_count:] if history_count > 0 else ())
-        )
+        history = self._history_signatures(board)
         zobrist_value = board.zobrist_hash() if hasattr(board, "zobrist_hash") else int(chess.polyglot.zobrist_hash(board))
         return (
             int(zobrist_value),

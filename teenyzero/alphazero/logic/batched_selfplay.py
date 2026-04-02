@@ -110,7 +110,10 @@ class BatchedSelfPlayRunner:
         print(f"[Runner] Reloaded self-play weights from {self.reload_model_path}")
 
     def _new_game(self, slot_id):
-        random_prob = max(0.0, 1.0 - (self.helper.total_games / self.helper.EXPLORATION_GAMES_THRESHOLD))
+        random_prob = max(
+            self.helper.MIN_FORCED_EXPLORATION_PROB,
+            1.0 - (self.helper.total_games / self.helper.EXPLORATION_GAMES_THRESHOLD),
+        )
         board = create_board()
         opening_plies = self.helper._seed_selfplay_opening(board)
         return GameSlot(
@@ -126,7 +129,7 @@ class BatchedSelfPlayRunner:
     def _is_finished(self, slot):
         return (
             slot.forced_outcome is not None
-            or slot.board.is_game_over(claim_draw=True)
+            or slot.board.is_game_over(claim_draw=False)
             or slot.move_count >= self.helper.MAX_GAME_LENGTH
         )
 

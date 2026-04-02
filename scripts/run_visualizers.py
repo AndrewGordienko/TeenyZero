@@ -26,9 +26,19 @@ def _project_root() -> Path:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--collector-only",
+        action="store_true",
+        help="Start the visualizer plus self-play actors only, with trainer, arena, and actor dashboard disabled.",
+    )
     parser.add_argument("--no-actors", action="store_true", help="Do not start the self-play actor process.")
     parser.add_argument("--no-trainer", action="store_true", help="Do not start the trainer process.")
     parser.add_argument("--no-arena", action="store_true", help="Do not start the arena process.")
+    parser.add_argument(
+        "--no-actor-dashboard",
+        action="store_true",
+        help="Disable the secondary actor dashboard on port 5002 for a little less self-play overhead.",
+    )
     parser.add_argument(
         "--actor-mode",
         choices=["auto", "inprocess", "mp"],
@@ -42,6 +52,25 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Override self-play leaf evaluation batch size.",
+    )
+    parser.add_argument("--selfplay-max-game-length", type=int, default=None, help="Override the self-play ply cap before forced termination.")
+    parser.add_argument("--selfplay-force-random-plies", type=int, default=None, help="Override the opening random/exploration plies.")
+    parser.add_argument("--selfplay-resign-after-plies", type=int, default=None, help="Override the earliest ply where resign logic can trigger.")
+    parser.add_argument("--selfplay-resign-value-threshold", type=float, default=None, help="Override the resign value threshold.")
+    parser.add_argument("--selfplay-resign-streak", type=int, default=None, help="Override how many bad evals in a row trigger resign.")
+    parser.add_argument("--selfplay-capped-value-threshold", type=float, default=None, help="Override the capped-game adjudication value threshold.")
+    parser.add_argument("--selfplay-capped-material-threshold", type=float, default=None, help="Override the capped-game adjudication material threshold.")
+    parser.add_argument(
+        "--selfplay-avoid-draw-repetition-plies",
+        type=int,
+        default=None,
+        help="Override how long self-play avoids claimable draw repetitions.",
+    )
+    parser.add_argument(
+        "--replay-shard-format",
+        choices=["npz", "raw"],
+        default=None,
+        help="Override the replay shard format written by self-play.",
     )
     parser.add_argument("--train-batch-size", type=int, default=None, help="Override trainer batch size.")
     parser.add_argument("--train-num-workers", type=int, default=None, help="Override trainer DataLoader worker count.")
@@ -73,6 +102,10 @@ if __name__ == "__main__":
         help="Override the gameplay board MCTS simulations in the visualizer app.",
     )
     args = parser.parse_args()
+    if args.collector_only:
+        args.no_trainer = True
+        args.no_arena = True
+        args.no_actor_dashboard = True
 
     if args.play_simulations is not None:
         os.environ["TEENYZERO_PLAY_SIMULATIONS"] = str(max(1, int(args.play_simulations)))
@@ -84,6 +117,24 @@ if __name__ == "__main__":
         os.environ["TEENYZERO_SELFPLAY_SIMULATIONS"] = str(max(1, int(args.selfplay_simulations)))
     if args.selfplay_leaf_batch_size is not None:
         os.environ["TEENYZERO_SELFPLAY_LEAF_BATCH_SIZE"] = str(max(1, int(args.selfplay_leaf_batch_size)))
+    if args.selfplay_max_game_length is not None:
+        os.environ["TEENYZERO_SELFPLAY_MAX_GAME_LENGTH"] = str(max(8, int(args.selfplay_max_game_length)))
+    if args.selfplay_force_random_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_FORCE_RANDOM_PLIES"] = str(max(0, int(args.selfplay_force_random_plies)))
+    if args.selfplay_resign_after_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_AFTER_PLIES"] = str(max(1, int(args.selfplay_resign_after_plies)))
+    if args.selfplay_resign_value_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_VALUE_THRESHOLD"] = str(float(args.selfplay_resign_value_threshold))
+    if args.selfplay_resign_streak is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_STREAK"] = str(max(1, int(args.selfplay_resign_streak)))
+    if args.selfplay_capped_value_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_CAPPED_VALUE_THRESHOLD"] = str(float(args.selfplay_capped_value_threshold))
+    if args.selfplay_capped_material_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_CAPPED_MATERIAL_THRESHOLD"] = str(float(args.selfplay_capped_material_threshold))
+    if args.selfplay_avoid_draw_repetition_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_AVOID_DRAW_REPETITION_PLIES"] = str(max(0, int(args.selfplay_avoid_draw_repetition_plies)))
+    if args.replay_shard_format is not None:
+        os.environ["TEENYZERO_REPLAY_SHARD_FORMAT"] = str(args.replay_shard_format)
     if args.train_batch_size is not None:
         os.environ["TEENYZERO_TRAIN_BATCH_SIZE"] = str(max(1, int(args.train_batch_size)))
     if args.train_num_workers is not None:
@@ -145,8 +196,11 @@ if __name__ == "__main__":
 
     if not args.no_actors and not _port_in_use(5002):
         run_actors = _project_root() / "scripts" / "run_actors.py"
+        actor_command = [sys.executable, str(run_actors)]
+        if args.no_actor_dashboard:
+            actor_command.append("--no-dashboard")
         actor_process = subprocess.Popen(
-            [sys.executable, str(run_actors)],
+            actor_command,
             cwd=str(_project_root()),
         )
 

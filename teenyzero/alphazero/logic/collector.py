@@ -14,6 +14,22 @@ from teenyzero.paths import runtime_free_bytes, runtime_low_disk_watermark_bytes
 PROFILE = get_runtime_profile()
 
 
+def _env_int(name, default, minimum=1):
+    raw_value = os.environ.get(name, "").strip()
+    try:
+        return max(minimum, int(raw_value))
+    except ValueError:
+        return int(default)
+
+
+def _env_float(name, default):
+    raw_value = os.environ.get(name, "").strip()
+    try:
+        return float(raw_value)
+    except ValueError:
+        return float(default)
+
+
 class DataCollector:
     def __init__(self, evaluator, engine, buffer_path="data/replay_buffer"):
         self.evaluator = evaluator
@@ -23,21 +39,31 @@ class DataCollector:
         os.makedirs(self.buffer_path, exist_ok=True)
 
         # Exploration / diversity controls
-        self.EXPLORATION_GAMES_THRESHOLD = 2000
-        self.FORCE_RANDOM_PLIES = 8
-        self.MAX_GAME_LENGTH = 160
-        self.TEMP_PLIES_MIN = 18
-        self.TEMP_PLIES_MAX = 30
+        self.EXPLORATION_GAMES_THRESHOLD = 6000
+        self.MIN_FORCED_EXPLORATION_PROB = 0.18
+        self.FORCE_RANDOM_PLIES = _env_int("TEENYZERO_SELFPLAY_FORCE_RANDOM_PLIES", PROFILE.selfplay_force_random_plies)
+        self.MAX_GAME_LENGTH = _env_int("TEENYZERO_SELFPLAY_MAX_GAME_LENGTH", PROFILE.selfplay_max_game_length)
+        self.TEMP_PLIES_MIN = 24
+        self.TEMP_PLIES_MAX = 40
         self.OPENING_TEMPERATURE = 1.45
         self.MIDGAME_TEMPERATURE = 1.18
-        self.OPENING_BOOK_PROB = 0.70
-        self.RANDOM_FIRST_PLY_PROB = 0.20
-        self.RESIGN_AFTER_PLIES = 24
-        self.RESIGN_VALUE_THRESHOLD = -0.92
-        self.RESIGN_STREAK = 3
-        self.CAPTURED_GAME_VALUE_THRESHOLD = 0.85
-        self.CAPTURED_GAME_MATERIAL_THRESHOLD = 2.5
-        self.AVOID_DRAW_REPETITION_PLIES = 120
+        self.OPENING_BOOK_PROB = 0.55
+        self.RANDOM_OPENING_PROB = 0.35
+        self.RESIGN_AFTER_PLIES = _env_int("TEENYZERO_SELFPLAY_RESIGN_AFTER_PLIES", PROFILE.selfplay_resign_after_plies)
+        self.RESIGN_VALUE_THRESHOLD = _env_float("TEENYZERO_SELFPLAY_RESIGN_VALUE_THRESHOLD", PROFILE.selfplay_resign_value_threshold)
+        self.RESIGN_STREAK = _env_int("TEENYZERO_SELFPLAY_RESIGN_STREAK", PROFILE.selfplay_resign_streak)
+        self.CAPTURED_GAME_VALUE_THRESHOLD = _env_float(
+            "TEENYZERO_SELFPLAY_CAPPED_VALUE_THRESHOLD",
+            PROFILE.selfplay_capped_value_threshold,
+        )
+        self.CAPTURED_GAME_MATERIAL_THRESHOLD = _env_float(
+            "TEENYZERO_SELFPLAY_CAPPED_MATERIAL_THRESHOLD",
+            PROFILE.selfplay_capped_material_threshold,
+        )
+        self.AVOID_DRAW_REPETITION_PLIES = _env_int(
+            "TEENYZERO_SELFPLAY_AVOID_DRAW_REPETITION_PLIES",
+            PROFILE.selfplay_avoid_draw_repetition_plies,
+        )
         self.SELFPLAY_OPENING_BOOK = (
             (),
             ("e2e4",),
@@ -116,14 +142,17 @@ class DataCollector:
         forced_outcome = None
 
         # Early training exploration
-        random_prob = max(0.0, 1.0 - (self.total_games / self.EXPLORATION_GAMES_THRESHOLD))
+        random_prob = max(
+            self.MIN_FORCED_EXPLORATION_PROB,
+            1.0 - (self.total_games / self.EXPLORATION_GAMES_THRESHOLD),
+        )
         is_forced_exploration = np.random.random() < random_prob
 
         # Keep temperature active longer so self-play does not collapse into
         # short symmetric lines that repeatedly get labeled as draws.
         temp_threshold = move_count + np.random.randint(self.TEMP_PLIES_MIN, self.TEMP_PLIES_MAX + 1)
 
-        while not board.is_game_over(claim_draw=True) and move_count < self.MAX_GAME_LENGTH:
+        while not board.is_game_over(claim_draw=False) and move_count < self.MAX_GAME_LENGTH:
             best_move, pi_dist, root = self.engine.search(
                 board,
                 is_training=True,
@@ -227,17 +256,27 @@ class DataCollector:
 
     def _sample_selfplay_opening_line(self):
         draw = np.random.random()
-        if draw < self.RANDOM_FIRST_PLY_PROB:
-            board = create_board()
-            legal_moves = list(board.legal_moves)
-            if legal_moves:
-                selected = np.random.choice(legal_moves)
-                return (selected.uci(),)
-            return ()
-        if draw < (self.RANDOM_FIRST_PLY_PROB + self.OPENING_BOOK_PROB):
+        if draw < self.RANDOM_OPENING_PROB:
+            return self._sample_random_opening_line()
+        if draw < (self.RANDOM_OPENING_PROB + self.OPENING_BOOK_PROB):
             opening = self.SELFPLAY_OPENING_BOOK[np.random.randint(0, len(self.SELFPLAY_OPENING_BOOK))]
             return tuple(opening)
         return ()
+
+    def _sample_random_opening_line(self):
+        board = create_board()
+        target_plies = np.random.randint(2, max(3, self.FORCE_RANDOM_PLIES + 2))
+        opening_line = []
+
+        for _ in range(target_plies):
+            legal_moves = list(board.legal_moves)
+            if not legal_moves:
+                break
+            selected = np.random.choice(legal_moves)
+            opening_line.append(selected.uci())
+            board.push(selected)
+
+        return tuple(opening_line)
 
     def _apply_opening_line(self, board, opening_line):
         applied = 0
@@ -346,12 +385,20 @@ class DataCollector:
             resign_streak[side_to_move] = 0
             return False
 
-        if root_value <= self.RESIGN_VALUE_THRESHOLD:
+        threshold = self.RESIGN_VALUE_THRESHOLD
+        required_streak = self.RESIGN_STREAK
+        if move_count >= self.RESIGN_AFTER_PLIES + 12:
+            threshold = max(threshold, -0.72)
+        if move_count >= self.RESIGN_AFTER_PLIES + 24:
+            threshold = max(threshold, -0.66)
+            required_streak = 1
+
+        if root_value <= threshold:
             resign_streak[side_to_move] += 1
         else:
             resign_streak[side_to_move] = 0
 
-        return resign_streak[side_to_move] >= self.RESIGN_STREAK
+        return resign_streak[side_to_move] >= required_streak
 
     def _move_creates_claimable_draw(self, board, move):
         probe = board.copy(stack=False)
@@ -392,18 +439,34 @@ class DataCollector:
         root_value = self._root_value(root)
         white_value = root_value if board.turn == chess.WHITE else -root_value
         material_score = self._material_score(board)
+        white_sign = 1.0 if white_value > 0 else (-1.0 if white_value < 0 else 0.0)
+        material_sign = 1.0 if material_score > 0 else (-1.0 if material_score < 0 else 0.0)
+        same_sign = white_sign != 0.0 and white_sign == material_sign
+        material_signal = float(np.tanh(material_score / 3.0))
+        blended_signal = (0.7 * white_value) + (0.3 * material_signal)
+        blended_sign = 1.0 if blended_signal > 0 else (-1.0 if blended_signal < 0 else 0.0)
 
-        if white_value >= self.CAPTURED_GAME_VALUE_THRESHOLD and material_score >= self.CAPTURED_GAME_MATERIAL_THRESHOLD:
-            return 1.0
-        if white_value <= -self.CAPTURED_GAME_VALUE_THRESHOLD and material_score <= -self.CAPTURED_GAME_MATERIAL_THRESHOLD:
-            return -1.0
+        if same_sign and abs(white_value) >= self.CAPTURED_GAME_VALUE_THRESHOLD and abs(material_score) >= self.CAPTURED_GAME_MATERIAL_THRESHOLD:
+            return white_sign
+        if abs(white_value) >= 0.90:
+            return white_sign
+        if abs(material_score) >= 4.5:
+            return material_sign
+        if same_sign and abs(white_value) >= 0.55 and abs(material_score) >= 0.75:
+            return white_sign
+        if same_sign and abs(white_value) >= max(0.22, self.CAPTURED_GAME_VALUE_THRESHOLD * 0.6):
+            return white_sign
+        if same_sign and abs(material_score) >= max(0.10, self.CAPTURED_GAME_MATERIAL_THRESHOLD):
+            return material_sign
+        if abs(blended_signal) >= max(0.18, self.CAPTURED_GAME_VALUE_THRESHOLD * 0.5):
+            return blended_sign
         return 0.0
 
     def _get_game_outcome(self, board, root=None, move_count=0):
         """
         Final scalar outcome from White's perspective.
         """
-        result = board.result(claim_draw=True)
+        result = board.result(claim_draw=False)
         if result == "1-0":
             return 1.0
         if result == "0-1":

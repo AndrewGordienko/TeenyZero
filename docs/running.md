@@ -304,6 +304,8 @@ The important ones for day-to-day use are:
   conservative CPU-friendly defaults
 - `mps`
   fuller Apple Silicon profile
+- `mps_collect`
+  Apple Silicon collector-first profile for faster replay generation
 - `mps_fast`
   lighter Apple Silicon profile for quick iteration
 - `cuda_fast`
@@ -322,6 +324,7 @@ Examples:
 
 ```bash
 python3 scripts/run_visualizers.py --device mps --profile mps_fast
+python3 scripts/run_visualizers.py --device mps --profile mps_collect
 python3 scripts/run_visualizers.py --device h200 --profile h200
 python3 scripts/run_actors.py --device cpu --profile local
 ```
@@ -354,6 +357,7 @@ Examples:
 ```bash
 --profile local
 --profile mps
+--profile mps_collect
 --profile mps_fast
 --profile h200
 ```
@@ -443,10 +447,11 @@ If you are trying to find the best runtime settings for a specific laptop or
 GPU, the easiest path is:
 
 ```bash
-python3 scripts/autotune.py --device mps --profile mps --board-backend native
+python3 scripts/autotune.py --device mps --profile mps_collect --board-backend native
 ```
 
-That one command runs the full phase 1 -> phase 2 -> phase 3 pipeline.
+That one command runs the full phase 1 -> phase 2 -> phase 3 -> phase 4
+pipeline.
 
 If you want to inspect or rerun a single stage, use `--phase phase1`,
 `--phase phase2`, or `--phase phase3`.
@@ -459,10 +464,10 @@ and the saved runs live under `var/data/autotune/`.
 If you want the whole loop alive, use:
 
 ```bash
-python3 scripts/run_visualizers.py --device mps --profile mps --board-backend native
+python3 scripts/run_visualizers.py --device mps --profile mps_collect --board-backend native --no-arena
 ```
 
-This is the best "just run the project" command.
+This is the best "train on a MacBook without wasting MPS time on arena" command.
 
 ## Runtime Data
 

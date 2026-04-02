@@ -189,6 +189,25 @@ if __name__ == "__main__":
         default=None,
         help="Override self-play leaf evaluation batch size.",
     )
+    parser.add_argument("--selfplay-max-game-length", type=int, default=None, help="Override the self-play ply cap before forced termination.")
+    parser.add_argument("--selfplay-force-random-plies", type=int, default=None, help="Override the opening random/exploration plies.")
+    parser.add_argument("--selfplay-resign-after-plies", type=int, default=None, help="Override the earliest ply where resign logic can trigger.")
+    parser.add_argument("--selfplay-resign-value-threshold", type=float, default=None, help="Override the resign value threshold.")
+    parser.add_argument("--selfplay-resign-streak", type=int, default=None, help="Override how many bad evals in a row trigger resign.")
+    parser.add_argument("--selfplay-capped-value-threshold", type=float, default=None, help="Override the capped-game adjudication value threshold.")
+    parser.add_argument("--selfplay-capped-material-threshold", type=float, default=None, help="Override the capped-game adjudication material threshold.")
+    parser.add_argument(
+        "--selfplay-avoid-draw-repetition-plies",
+        type=int,
+        default=None,
+        help="Override how long self-play avoids claimable draw repetitions.",
+    )
+    parser.add_argument(
+        "--replay-shard-format",
+        choices=["npz", "raw"],
+        default=None,
+        help="Override the replay shard format written by self-play.",
+    )
     parser.add_argument(
         "--no-dashboard",
         action="store_true",
@@ -201,6 +220,24 @@ if __name__ == "__main__":
         help="`inprocess` keeps self-play and inference on one device-hosting process; `mp` keeps the old queue/server layout.",
     )
     args = parser.parse_args()
+    if args.selfplay_max_game_length is not None:
+        os.environ["TEENYZERO_SELFPLAY_MAX_GAME_LENGTH"] = str(max(8, int(args.selfplay_max_game_length)))
+    if args.selfplay_force_random_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_FORCE_RANDOM_PLIES"] = str(max(0, int(args.selfplay_force_random_plies)))
+    if args.selfplay_resign_after_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_AFTER_PLIES"] = str(max(1, int(args.selfplay_resign_after_plies)))
+    if args.selfplay_resign_value_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_VALUE_THRESHOLD"] = str(float(args.selfplay_resign_value_threshold))
+    if args.selfplay_resign_streak is not None:
+        os.environ["TEENYZERO_SELFPLAY_RESIGN_STREAK"] = str(max(1, int(args.selfplay_resign_streak)))
+    if args.selfplay_capped_value_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_CAPPED_VALUE_THRESHOLD"] = str(float(args.selfplay_capped_value_threshold))
+    if args.selfplay_capped_material_threshold is not None:
+        os.environ["TEENYZERO_SELFPLAY_CAPPED_MATERIAL_THRESHOLD"] = str(float(args.selfplay_capped_material_threshold))
+    if args.selfplay_avoid_draw_repetition_plies is not None:
+        os.environ["TEENYZERO_SELFPLAY_AVOID_DRAW_REPETITION_PLIES"] = str(max(0, int(args.selfplay_avoid_draw_repetition_plies)))
+    if args.replay_shard_format is not None:
+        os.environ["TEENYZERO_REPLAY_SHARD_FORMAT"] = str(args.replay_shard_format)
     env_workers = os.environ.get("TEENYZERO_SELFPLAY_WORKERS", "").strip()
     env_workers = int(env_workers) if env_workers.isdigit() else None
     default_workers = _default_worker_count(DEVICE)

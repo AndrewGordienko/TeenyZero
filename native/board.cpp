@@ -903,7 +903,10 @@ bool insufficient_material(const NativeBoardState& board) {
 }
 
 std::string board_result(NativeBoardState& board, bool claim_draw) {
-    if (claim_draw && (board.halfmove_clock >= 100 || repetition_count(board) >= 3 || insufficient_material(board))) {
+    if (insufficient_material(board)) {
+        return "1/2-1/2";
+    }
+    if (claim_draw && (board.halfmove_clock >= 100 || repetition_count(board) >= 3)) {
         return "1/2-1/2";
     }
     auto legal_moves = generate_legal_moves(board);

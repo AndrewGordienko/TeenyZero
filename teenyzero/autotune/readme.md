@@ -40,6 +40,15 @@ That single command is the intended UX:
 
 The script stays small on purpose. It bootstraps the runtime, then hands off to `pipeline.py`.
 
+For Apple Silicon sample collection, prefer the collector-first profile:
+
+```bash
+python3 scripts/autotune.py --device mps --profile mps_collect --board-backend native
+```
+
+That profile keeps the same main MPS network shape as `mps`, but uses cheaper
+self-play defaults and shorter self-play games so the replay buffer fills faster.
+
 If you are trying to change behavior, a good rule of thumb is:
 
 - edit `phases/phase1.py` or `phases/phase2.py` for runtime throughput search behavior

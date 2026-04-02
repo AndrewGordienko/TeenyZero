@@ -94,6 +94,23 @@ def _optimizer_candidates(base_value: str) -> list[str]:
     return values
 
 
+def _selfplay_simulation_candidates(profile: RuntimeProfile) -> list[int]:
+    scales = (0.5, 0.75, 1.0, 1.25, 1.5)
+    minimum = max(16, profile.selfplay_simulations // 2)
+    if profile.name == "mps":
+        minimum = 32
+        scales = (0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 1.5)
+    elif profile.name in {"mps_fast", "mps_collect"}:
+        minimum = 24
+        scales = (0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 1.5)
+    return _int_candidates(
+        profile.selfplay_simulations,
+        minimum=minimum,
+        maximum=max(profile.selfplay_simulations, int(profile.selfplay_simulations * 1.5)),
+        scales=scales,
+    )
+
+
 def _baseline_profile_overrides(profile: RuntimeProfile) -> dict:
     return {
         "train_optimizer": str(profile.train_optimizer).lower(),
@@ -139,12 +156,7 @@ def _override_value_sets(profile: RuntimeProfile) -> dict:
             maximum=max(profile.train_samples_per_cycle, int(profile.train_samples_per_cycle * 1.5)),
             scales=(0.5, 0.75, 1.0, 1.25, 1.5),
         ),
-        "selfplay_simulations": _int_candidates(
-            profile.selfplay_simulations,
-            minimum=max(16, profile.selfplay_simulations // 2),
-            maximum=max(profile.selfplay_simulations, int(profile.selfplay_simulations * 1.5)),
-            scales=(0.5, 0.75, 1.0, 1.25, 1.5),
-        ),
+        "selfplay_simulations": _selfplay_simulation_candidates(profile),
     }
 
 

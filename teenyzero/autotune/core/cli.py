@@ -3,6 +3,12 @@ from __future__ import annotations
 import argparse
 
 
+def default_objective(profile) -> str:
+    if profile.name.endswith("_collect") or profile.name.endswith("_fast"):
+        return "selfplay"
+    return "balanced"
+
+
 def parse_args(profile):
     parser = argparse.ArgumentParser(description="Run TeenyZero autotuning across runtime and profile-level settings.")
     parser.add_argument(
@@ -15,8 +21,8 @@ def parse_args(profile):
     parser.add_argument(
         "--objective",
         choices=["balanced", "selfplay", "train"],
-        default="balanced",
-        help="Scoring objective for ranking runtime candidates.",
+        default=None,
+        help="Scoring objective for ranking runtime candidates. Defaults to `selfplay` for `*_fast` and `*_collect` profiles.",
     )
     parser.add_argument("--searches-per-worker", type=int, default=8, help="Searches per worker for the self-play benchmark.")
     parser.add_argument("--selfplay-simulations", type=int, default=profile.selfplay_simulations)
@@ -60,7 +66,10 @@ def parse_args(profile):
     )
     parser.add_argument("--no-resume", action="store_true", help="Disable reuse of compatible saved phase runs and phase 4 cached trials.")
     parser.add_argument("--no-auto-promote", action="store_true", help="Do not update the shared markdown/catalog automatically after `--phase auto`.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.objective is None:
+        args.objective = default_objective(profile)
+    return args
 
 
 def print_trial_summary(trial: dict, *, phase: str) -> None:
