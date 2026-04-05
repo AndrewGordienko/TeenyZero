@@ -14,13 +14,23 @@ import torch
 from flask import Flask, request, jsonify, render_template, redirect
 from teenyzero.autotune.catalog.recommendations import load_recommendations
 from teenyzero.autotune.core.storage import latest_autotune_run, list_autotune_runs
+from teenyzero.alphafold.inspection import sample_geometry_payload, sample_random_state, sample_replay_state
 from teenyzero.alphazero.backend import create_board, move_from_uci
-from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, save_checkpoint
+from teenyzero.alphazero.checkpoints import (
+    build_model,
+    build_model_from_metadata,
+    load_checkpoint,
+    read_checkpoint_meta,
+    save_checkpoint,
+)
 from teenyzero.alphazero.runtime import get_runtime_profile, get_runtime_selection, runtime_profile_payload
 from teenyzero.alphazero.search_session import SearchSession
 from teenyzero.mcts.search import MCTS
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.paths import (
+    ALPHAFOLD_MODEL_PATH,
+    ALPHAFOLD_TRAINING_HISTORY_PATH,
+    ALPHAFOLD_TRAINING_STATE_PATH,
     ARENA_HISTORY_PATH,
     ARENA_LOCK_PATH,
     ARENA_MATCHES_PATH,
@@ -85,6 +95,9 @@ _arena_process = None
 _arena_lock = threading.Lock()
 _trainer_process = None
 _trainer_lock = threading.Lock()
+_alphafold_inspector_model = None
+_alphafold_inspector_mtime = None
+_alphafold_inspector_lock = threading.Lock()
 _play_model_mtime = None
 RUNTIME_PROFILE = get_runtime_profile()
 RUNTIME_PROFILE_SETTINGS = runtime_profile_payload(RUNTIME_PROFILE)
@@ -363,6 +376,8 @@ def _reset_training_artifacts():
         path.unlink(missing_ok=True)
 
     fresh_model = build_model()
+    if bool(getattr(fresh_model, "supports_geometry_aux", False)) and ALPHAFOLD_MODEL_PATH.exists():
+        load_checkpoint(fresh_model, ALPHAFOLD_MODEL_PATH, map_location="cpu", allow_partial=True)
     BEST_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     save_checkpoint(fresh_model, BEST_MODEL_PATH)
     save_checkpoint(fresh_model, LATEST_MODEL_PATH)
@@ -457,6 +472,52 @@ def _maybe_reload_play_model():
         search_session.reset()
         _play_model_mtime = mtime
 
+
+def _load_alphafold_inspector_model():
+    global _alphafold_inspector_model, _alphafold_inspector_mtime
+    checkpoint_info = _select_alphafold_inspector_checkpoint()
+    if checkpoint_info is None:
+        return None
+    checkpoint_path, meta, mtime = checkpoint_info
+
+    if _alphafold_inspector_model is not None and _alphafold_inspector_mtime is not None and mtime <= _alphafold_inspector_mtime:
+        return _alphafold_inspector_model
+
+    with _alphafold_inspector_lock:
+        if _alphafold_inspector_model is not None and _alphafold_inspector_mtime is not None and mtime <= _alphafold_inspector_mtime:
+            return _alphafold_inspector_model
+
+        model = build_model_from_metadata(meta)
+        load_result = load_checkpoint(model, checkpoint_path, map_location="cpu", allow_partial=True)
+        if not load_result["loaded"]:
+            return None
+        model = model.to(device="cpu")
+        model.eval()
+        _alphafold_inspector_model = model
+        _alphafold_inspector_mtime = mtime
+        return _alphafold_inspector_model
+
+
+def _select_alphafold_inspector_checkpoint():
+    candidates = []
+    for checkpoint_path in (LATEST_MODEL_PATH, ALPHAFOLD_MODEL_PATH):
+        if not checkpoint_path.exists():
+            continue
+        meta = read_checkpoint_meta(checkpoint_path, map_location="cpu")
+        if str(meta.get("architecture", "")).strip().lower() != "alphafold_board":
+            continue
+        try:
+            mtime = checkpoint_path.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((mtime, checkpoint_path, meta))
+
+    if not candidates:
+        return None
+
+    _, checkpoint_path, meta = max(candidates, key=lambda item: item[0])
+    return checkpoint_path, meta, checkpoint_path.stat().st_mtime
+
 @app.route("/")
 def index():
     return render_template("hub/home.html")
@@ -469,6 +530,11 @@ def play():
 @app.route("/training")
 def training():
     return render_template("training_status/status.html")
+
+
+@app.route("/alphafold")
+def alphafold_training():
+    return render_template("alphafold_status/status.html")
 
 
 @app.route("/arena")
@@ -496,6 +562,34 @@ def training_status():
 @app.route("/api/training_history")
 def training_history():
     return jsonify(_load_json_payload(TRAINING_HISTORY_PATH, []))
+
+
+@app.route("/api/alphafold_status")
+def alphafold_status():
+    return jsonify(_enrich_runtime_payload(_load_json_payload(ALPHAFOLD_TRAINING_STATE_PATH, {"status": "idle"})))
+
+
+@app.route("/api/alphafold_history")
+def alphafold_history():
+    return jsonify(_load_json_payload(ALPHAFOLD_TRAINING_HISTORY_PATH, []))
+
+
+@app.route("/api/alphafold_sample")
+def alphafold_sample():
+    raw_source = request.args.get("source", "replay").strip().lower()
+    source = raw_source if raw_source in {"replay", "random"} else "replay"
+    seed = request.args.get("seed", type=int)
+    sample = sample_replay_state(str(REPLAY_BUFFER_PATH), rng_seed=seed) if source == "replay" else None
+    if sample is None:
+        sample = sample_random_state(rng_seed=seed)
+    if sample is None:
+        return jsonify({"error": "No AlphaFold sample source is available."}), 404
+
+    model = _load_alphafold_inspector_model()
+    payload = sample_geometry_payload(sample["state"], sample["source"], model=model, device="cpu")
+    checkpoint_info = _select_alphafold_inspector_checkpoint()
+    payload["checkpoint_path"] = str(checkpoint_info[0]) if checkpoint_info is not None else None
+    return jsonify(payload)
 
 
 @app.route("/api/arena_status")

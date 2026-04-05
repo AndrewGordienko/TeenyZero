@@ -14,6 +14,7 @@ DATA_DIR = RUNTIME_ROOT / "data"
 MODELS_DIR = RUNTIME_ROOT / "models"
 BEST_MODEL_PATH = MODELS_DIR / "best_model.pth"
 LATEST_MODEL_PATH = MODELS_DIR / "latest_model.pth"
+ALPHAFOLD_MODEL_PATH = MODELS_DIR / "alphafold_latest_model.pth"
 REPLAY_BUFFER_PATH = DATA_DIR / "replay_buffer"
 AUTOTUNE_DIR = DATA_DIR / "autotune"
 AUTOTUNE_RUNS_DIR = AUTOTUNE_DIR / "runs"
@@ -24,7 +25,9 @@ AUTOTUNE_PHASE2_LATEST_PATH = AUTOTUNE_DIR / "phase2_latest.json"
 AUTOTUNE_PHASE3_LATEST_PATH = AUTOTUNE_DIR / "phase3_latest.json"
 AUTOTUNE_PHASE4_LATEST_PATH = AUTOTUNE_DIR / "phase4_latest.json"
 TRAINING_STATE_PATH = DATA_DIR / "training_state.json"
+ALPHAFOLD_TRAINING_STATE_PATH = DATA_DIR / "alphafold_training_state.json"
 TRAINING_HISTORY_PATH = DATA_DIR / "training_history.json"
+ALPHAFOLD_TRAINING_HISTORY_PATH = DATA_DIR / "alphafold_training_history.json"
 TRAINER_LOCK_PATH = DATA_DIR / "trainer.lock"
 ARENA_STATE_PATH = DATA_DIR / "arena_state.json"
 ARENA_HISTORY_PATH = DATA_DIR / "arena_history.json"
@@ -112,12 +115,15 @@ def runtime_paths_payload():
         "autotune_phase4_latest_path": str(AUTOTUNE_PHASE4_LATEST_PATH),
         "training_state_path": str(TRAINING_STATE_PATH),
         "training_history_path": str(TRAINING_HISTORY_PATH),
+        "alphafold_training_history_path": str(ALPHAFOLD_TRAINING_HISTORY_PATH),
         "arena_state_path": str(ARENA_STATE_PATH),
         "arena_history_path": str(ARENA_HISTORY_PATH),
         "arena_matches_path": str(ARENA_MATCHES_PATH),
         "model_archive_path": str(MODEL_ARCHIVE_PATH),
         "best_model_path": str(BEST_MODEL_PATH),
         "latest_model_path": str(LATEST_MODEL_PATH),
+        "alphafold_model_path": str(ALPHAFOLD_MODEL_PATH),
+        "alphafold_training_state_path": str(ALPHAFOLD_TRAINING_STATE_PATH),
         "runtime_tree_bytes": runtime_tree_bytes(),
         "runtime_free_bytes": runtime_free_bytes(),
         "min_free_disk_bytes": runtime_low_disk_watermark_bytes(),

@@ -12,6 +12,8 @@ The runnable surface is intentionally flat now. Use the top-level scripts only.
   Starts terminal self-play or the gameplay UI.
 - `scripts/run_visualizers.py`
   Starts the full dashboard stack.
+- `scripts/train_alphafold.py`
+  Runs the standalone AlphaFold-style geometry pretraining step and writes a dedicated checkpoint.
 - `scripts/train.py`
   Runs the continuous trainer loop.
 

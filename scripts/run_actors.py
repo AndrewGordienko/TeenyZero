@@ -16,14 +16,19 @@ from teenyzero.runtime_bootstrap import bootstrap_runtime_cli
 
 bootstrap_runtime_cli()
 
-from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, save_checkpoint
+from teenyzero.alphazero.checkpoints import (
+    build_model,
+    load_checkpoint,
+    model_architecture_name,
+    save_checkpoint,
+)
 from teenyzero.alphazero.logic.batched_selfplay import BatchedSelfPlayRunner
 from teenyzero.alphazero.runtime import get_runtime_selection
 from teenyzero.alphazero.servers.inference import inference_worker
 from teenyzero.alphazero.logic.collector import DataCollector
 from teenyzero.mcts.evaluator import AlphaZeroEvaluator
 from teenyzero.mcts.search import MCTS
-from teenyzero.paths import BEST_MODEL_PATH, LATEST_MODEL_PATH, REPLAY_BUFFER_PATH, ensure_runtime_dirs
+from teenyzero.paths import ALPHAFOLD_MODEL_PATH, BEST_MODEL_PATH, LATEST_MODEL_PATH, REPLAY_BUFFER_PATH, ensure_runtime_dirs
 from teenyzero.visualizers.cluster_monitor.dashboard import run_dashboard
 
 
@@ -75,14 +80,18 @@ def bootstrap_model(path, fallback_path=None):
         if load_result["loaded"]:
             return
         print(f"[*] Replacing unusable checkpoint at {path} ({load_result['reason']})...")
-    elif fallback_path and os.path.exists(fallback_path):
-        fallback_result = load_checkpoint(model, fallback_path, map_location="cpu", allow_partial=True)
+    bootstrap_sources = []
+    if fallback_path and os.path.exists(fallback_path):
+        bootstrap_sources.append((fallback_path, "fallback checkpoint"))
+    if model_architecture_name() == "alphafold_board" and os.path.exists(ALPHAFOLD_MODEL_PATH):
+        bootstrap_sources.append((str(ALPHAFOLD_MODEL_PATH), "AlphaFold pretrain"))
+    for source_path, label in bootstrap_sources:
+        fallback_result = load_checkpoint(model, source_path, map_location="cpu", allow_partial=True)
         if fallback_result["loaded"]:
-            print(f"[*] Initializing {path} from fallback checkpoint {fallback_path}...")
+            print(f"[*] Initializing {path} from {label} {source_path}...")
             save_checkpoint(model, path)
             return
-    else:
-        print(f"[*] Initializing fresh AlphaNet at {path}...")
+    print(f"[*] Initializing fresh {model_architecture_name()} model at {path}...")
     save_checkpoint(model, path)
 
 

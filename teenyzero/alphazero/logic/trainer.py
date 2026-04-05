@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from teenyzero.alphafold.features import build_square_target_tensor_from_state
 from teenyzero.alphazero.config import INPUT_SHAPE
 from teenyzero.alphazero.checkpoints import save_checkpoint
 from teenyzero.alphazero.runtime import get_runtime_profile
@@ -32,12 +33,21 @@ class ReplayFileInfo:
 
 
 class ReplayWindowDataset(Dataset):
-    def __init__(self, replay_files, sample_size=None, rng_seed=None, progress_callback=None, raw_cache_size=6):
+    def __init__(
+        self,
+        replay_files,
+        sample_size=None,
+        rng_seed=None,
+        progress_callback=None,
+        raw_cache_size=6,
+        include_geometry_targets=False,
+    ):
         self.files = replay_files
         self.sample_size = sample_size
         self.rng_seed = rng_seed
         self.progress_callback = progress_callback
         self.raw_cache_size = max(1, int(raw_cache_size))
+        self.include_geometry_targets = bool(include_geometry_targets)
         self.states = np.empty((0, *INPUT_SHAPE), dtype=np.float32)
         self.pis = np.empty((0, 4672), dtype=np.float32)
         self.zs = np.empty((0,), dtype=np.float32)
@@ -82,10 +92,12 @@ class ReplayWindowDataset(Dataset):
             chosen = selected_global[local_start:local_end] - file_start
 
             if len(chosen) > 0:
-                with np.load(info.path) as data:
-                    state_chunks.append(np.asarray(data["states"][chosen], dtype=np.float32))
-                    pi_chunks.append(np.asarray(data["pis"][chosen], dtype=np.float32))
-                    z_chunks.append(np.asarray(data["zs"][chosen], dtype=np.float32))
+                selected = self._load_selected_samples(info, chosen)
+                if selected is not None:
+                    state_array, pi_array, z_array = selected
+                    state_chunks.append(state_array)
+                    pi_chunks.append(pi_array)
+                    z_chunks.append(z_array)
 
             global_offset = file_end
             if self.progress_callback is not None and (file_idx == total_files or file_idx % 25 == 0):
@@ -110,6 +122,28 @@ class ReplayWindowDataset(Dataset):
             self.states = np.ascontiguousarray(np.concatenate(state_chunks, axis=0))
             self.pis = np.ascontiguousarray(np.concatenate(pi_chunks, axis=0))
             self.zs = np.ascontiguousarray(np.concatenate(z_chunks, axis=0))
+
+    def _load_selected_samples(self, info: ReplayFileInfo, chosen):
+        chosen = np.asarray(chosen, dtype=np.int64)
+        try:
+            if info.shard_format == "raw":
+                if not info.states_path or not info.pis_path or not info.zs_path:
+                    return None
+                states, pis, zs = self._load_raw_arrays(info)
+                return (
+                    np.asarray(states[chosen], dtype=np.float32),
+                    np.asarray(pis[chosen], dtype=np.float32),
+                    np.asarray(zs[chosen], dtype=np.float32),
+                )
+
+            with np.load(info.path) as data:
+                return (
+                    np.asarray(data["states"][chosen], dtype=np.float32),
+                    np.asarray(data["pis"][chosen], dtype=np.float32),
+                    np.asarray(data["zs"][chosen], dtype=np.float32),
+                )
+        except FileNotFoundError:
+            return None
 
     def _build_sample_refs(self):
         total_files = len(self.files)
@@ -194,19 +228,28 @@ class ReplayWindowDataset(Dataset):
             state = np.array(states[local_idx], dtype=np.float32, copy=True)
             pi = np.array(pis[local_idx], dtype=np.float32, copy=True)
             z = float(zs[local_idx])
-            return (
+            sample = (
                 torch.from_numpy(state).float(),
                 torch.from_numpy(pi).float(),
                 torch.tensor([z], dtype=torch.float32),
             )
+            if not self.include_geometry_targets:
+                return sample
+            return sample + (self._geometry_targets_for_state(state),)
         state = self.states[idx]
         pi = self.pis[idx]
         z = self.zs[idx]
-        return (
+        sample = (
             torch.from_numpy(state).float(),
             torch.from_numpy(pi).float(),
             torch.tensor([z], dtype=torch.float32),
         )
+        if not self.include_geometry_targets:
+            return sample
+        return sample + (self._geometry_targets_for_state(state),)
+
+    def _geometry_targets_for_state(self, state):
+        return torch.from_numpy(build_square_target_tensor_from_state(state)).float()
 
 
 def replay_file_infos(data_dir):
@@ -351,9 +394,15 @@ class AlphaTrainer:
         self.precision = precision.lower()
         self.use_compile = bool(use_compile and hasattr(torch, "compile"))
         self.max_grad_norm = float(max_grad_norm or 0.0)
+        self.supports_geometry_aux = bool(getattr(self.model, "supports_geometry_aux", False))
+        self.geometry_loss_weight = 0.25
         self.autocast_dtype = torch.bfloat16 if self.precision == "bf16" else torch.float16
         self.use_autocast = self.device == "cuda" and self.precision in {"bf16", "fp16"}
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.device == "cuda" and self.precision == "fp16")
+        scaler_enabled = self.device == "cuda" and self.precision == "fp16"
+        if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+            self.scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
+        else:
+            self.scaler = torch.cuda.amp.GradScaler(enabled=scaler_enabled)
         if self.use_channels_last:
             self.model = self.model.to(memory_format=torch.channels_last)
 
@@ -386,11 +435,24 @@ class AlphaTrainer:
             return contextlib.nullcontext()
         return torch.autocast(device_type="cuda", dtype=self.autocast_dtype)
 
+    def _geometry_losses(self, aux_outputs, geometry_targets):
+        friendly_attack_loss = F.binary_cross_entropy_with_logits(aux_outputs["friendly_attack"], geometry_targets[:, 0])
+        enemy_attack_loss = F.binary_cross_entropy_with_logits(aux_outputs["enemy_attack"], geometry_targets[:, 1])
+        friendly_pressure_loss = F.mse_loss(torch.sigmoid(aux_outputs["friendly_king_pressure"]), geometry_targets[:, 2])
+        enemy_pressure_loss = F.mse_loss(torch.sigmoid(aux_outputs["enemy_king_pressure"]), geometry_targets[:, 3])
+        attack_loss = 0.5 * (friendly_attack_loss + enemy_attack_loss)
+        pressure_loss = 0.5 * (friendly_pressure_loss + enemy_pressure_loss)
+        geometry_loss = attack_loss + pressure_loss
+        return geometry_loss, attack_loss, pressure_loss
+
     def train_epoch(self, dataloader, progress_callback=None):
         self.model.train()
         total_loss = 0.0
         policy_losses = 0.0
         value_losses = 0.0
+        geometry_losses = 0.0
+        attack_losses = 0.0
+        pressure_losses = 0.0
         batch_count = 0
         skipped_batches = 0
         samples_seen = 0
@@ -399,7 +461,12 @@ class AlphaTrainer:
         optimizer_steps = 0
         self.optimizer.zero_grad(set_to_none=True)
 
-        for batch_idx, (states, target_pis, target_zs) in enumerate(dataloader, start=1):
+        for batch_idx, batch in enumerate(dataloader, start=1):
+            if len(batch) == 4:
+                states, target_pis, target_zs, geometry_targets = batch
+            else:
+                states, target_pis, target_zs = batch
+                geometry_targets = None
             states = states.to(self.device, non_blocking=self.device == "cuda")
             if self.use_channels_last:
                 states = states.contiguous(memory_format=torch.channels_last)
@@ -418,13 +485,26 @@ class AlphaTrainer:
             if (~valid_rows).any():
                 target_pis[~valid_rows] = 0.0
             samples_seen += int(states.size(0))
+            if geometry_targets is not None:
+                geometry_targets = geometry_targets.to(self.device, non_blocking=self.device == "cuda")
 
             with self._autocast_context():
-                out_pi_logits, out_v = self.model(states)
+                if geometry_targets is not None and self.supports_geometry_aux:
+                    out_pi_logits, out_v, aux_outputs = self.model(states, return_aux=True)
+                else:
+                    out_pi_logits, out_v = self.model(states)
+                    aux_outputs = None
                 log_probs = F.log_softmax(out_pi_logits, dim=1)
                 loss_pi = -torch.sum(target_pis * log_probs, dim=1).mean()
                 loss_v = F.mse_loss(out_v, target_zs)
                 loss = loss_pi + loss_v
+                if aux_outputs is not None and geometry_targets is not None:
+                    geometry_loss, attack_loss, pressure_loss = self._geometry_losses(aux_outputs, geometry_targets)
+                    loss = loss + self.geometry_loss_weight * geometry_loss
+                else:
+                    geometry_loss = loss.new_zeros(())
+                    attack_loss = loss.new_zeros(())
+                    pressure_loss = loss.new_zeros(())
 
             if not torch.isfinite(loss):
                 skipped_batches += 1
@@ -454,6 +534,9 @@ class AlphaTrainer:
             total_loss += float(loss.item())
             policy_losses += float(loss_pi.item())
             value_losses += float(loss_v.item())
+            geometry_losses += float(geometry_loss.item())
+            attack_losses += float(attack_loss.item())
+            pressure_losses += float(pressure_loss.item())
             batch_count += 1
 
             if progress_callback is not None and (batch_idx == total_batches or batch_idx % 10 == 0):
@@ -468,6 +551,9 @@ class AlphaTrainer:
                         "running_loss": total_loss / safe_batch_count,
                         "running_policy_loss": policy_losses / safe_batch_count,
                         "running_value_loss": value_losses / safe_batch_count,
+                        "running_geometry_loss": geometry_losses / safe_batch_count,
+                        "running_attack_loss": attack_losses / safe_batch_count,
+                        "running_pressure_loss": pressure_losses / safe_batch_count,
                         "elapsed_s": elapsed_s,
                         "avg_batch_time_ms": (elapsed_s / safe_batch_count) * 1000.0,
                         "batches_per_s": batch_count / safe_elapsed,
@@ -483,6 +569,9 @@ class AlphaTrainer:
                 "loss": 0.0,
                 "policy_loss": 0.0,
                 "value_loss": 0.0,
+                "geometry_loss": 0.0,
+                "attack_loss": 0.0,
+                "pressure_loss": 0.0,
                 "batches": 0,
                 "samples_seen": 0,
                 "duration_s": 0.0,
@@ -499,6 +588,9 @@ class AlphaTrainer:
             "loss": total_loss / batch_count,
             "policy_loss": policy_losses / batch_count,
             "value_loss": value_losses / batch_count,
+            "geometry_loss": geometry_losses / batch_count,
+            "attack_loss": attack_losses / batch_count,
+            "pressure_loss": pressure_losses / batch_count,
             "batches": batch_count,
             "samples_seen": samples_seen,
             "duration_s": elapsed_s,
@@ -511,7 +603,7 @@ class AlphaTrainer:
         print(
             "[*] Training Complete: "
             f"Loss {metrics['loss']:.4f} "
-            f"(Pol: {metrics['policy_loss']:.4f}, Val: {metrics['value_loss']:.4f})"
+            f"(Pol: {metrics['policy_loss']:.4f}, Val: {metrics['value_loss']:.4f}, Geo: {metrics['geometry_loss']:.4f})"
         )
         if skipped_batches:
             print(f"[*] Skipped {skipped_batches} non-finite training batches.")
@@ -534,6 +626,7 @@ def dataloader_for_replay_window(
     num_workers=None,
     pin_memory=None,
     prefetch_factor=None,
+    include_geometry_targets=False,
 ):
     files, sample_count = latest_replay_window(data_dir, max_samples=max_samples)
     dataset = ReplayWindowDataset(
@@ -541,6 +634,7 @@ def dataloader_for_replay_window(
         sample_size=sample_size,
         rng_seed=rng_seed,
         progress_callback=progress_callback,
+        include_geometry_targets=include_geometry_targets,
     )
     # The replay window is fully indexed/built during dataset construction.
     # Clearing the callback here avoids pickling nested/local functions when

@@ -23,6 +23,7 @@ from teenyzero.alphazero.logic.trainer import (
 )
 from teenyzero.alphazero.runtime import get_runtime_selection, runtime_profile_payload
 from teenyzero.paths import (
+    ALPHAFOLD_MODEL_PATH,
     BEST_MODEL_PATH,
     LATEST_MODEL_PATH,
     MODEL_ARCHIVE_PATH,
@@ -110,6 +111,9 @@ def _state_defaults():
         "last_loss": 0.0,
         "last_policy_loss": 0.0,
         "last_value_loss": 0.0,
+        "last_geometry_loss": 0.0,
+        "last_attack_loss": 0.0,
+        "last_pressure_loss": 0.0,
         "last_cycle_samples": 0,
         "last_window_samples": 0,
         "last_window_files": 0,
@@ -150,6 +154,9 @@ def _state_defaults():
         "running_loss": 0.0,
         "running_policy_loss": 0.0,
         "running_value_loss": 0.0,
+        "running_geometry_loss": 0.0,
+        "running_attack_loss": 0.0,
+        "running_pressure_loss": 0.0,
         "heartbeat_at": None,
         "latest_model_path": None,
         "last_pruned_files": 0,
@@ -346,6 +353,10 @@ def main():
         fallback_result = load_checkpoint(model, MODEL_PATH, map_location=device, allow_partial=True)
         if fallback_result["loaded"]:
             load_result = fallback_result
+    if not load_result["loaded"] and bool(getattr(model, "supports_geometry_aux", False)):
+        alphafold_result = load_checkpoint(model, ALPHAFOLD_MODEL_PATH, map_location=device, allow_partial=True)
+        if alphafold_result["loaded"]:
+            load_result = alphafold_result
 
     if load_result["loaded"]:
         flavor = "partial" if load_result["partial"] else "full"
@@ -477,6 +488,7 @@ def main():
             num_workers=TRAIN_NUM_WORKERS,
             pin_memory=TRAIN_PIN_MEMORY,
             prefetch_factor=PROFILE.train_prefetch_factor,
+            include_geometry_targets=bool(getattr(model, "supports_geometry_aux", False)),
         )
         window_build_duration_s = time.perf_counter() - window_started
         state["last_window_build_duration_s"] = float(window_build_duration_s)
@@ -493,6 +505,9 @@ def main():
                     running_loss=float(progress.get("running_loss", 0.0)),
                     running_policy_loss=float(progress.get("running_policy_loss", 0.0)),
                     running_value_loss=float(progress.get("running_value_loss", 0.0)),
+                    running_geometry_loss=float(progress.get("running_geometry_loss", 0.0)),
+                    running_attack_loss=float(progress.get("running_attack_loss", 0.0)),
+                    running_pressure_loss=float(progress.get("running_pressure_loss", 0.0)),
                     train_elapsed_s=float(progress.get("elapsed_s", 0.0)),
                     avg_batch_time_ms=float(progress.get("avg_batch_time_ms", 0.0)),
                     batches_per_s=float(progress.get("batches_per_s", 0.0)),
@@ -525,6 +540,9 @@ def main():
         state["last_loss"] = float(last_metrics["loss"]) if last_metrics else 0.0
         state["last_policy_loss"] = float(last_metrics["policy_loss"]) if last_metrics else 0.0
         state["last_value_loss"] = float(last_metrics["value_loss"]) if last_metrics else 0.0
+        state["last_geometry_loss"] = float(last_metrics["geometry_loss"]) if last_metrics else 0.0
+        state["last_attack_loss"] = float(last_metrics["attack_loss"]) if last_metrics else 0.0
+        state["last_pressure_loss"] = float(last_metrics["pressure_loss"]) if last_metrics else 0.0
         state["last_cycle_samples"] = new_samples
         state["last_window_samples"] = int(window_samples)
         state["last_window_files"] = len(files)
@@ -548,6 +566,9 @@ def main():
                 "loss": float(last_metrics["loss"]) if last_metrics else 0.0,
                 "policy_loss": float(last_metrics["policy_loss"]) if last_metrics else 0.0,
                 "value_loss": float(last_metrics["value_loss"]) if last_metrics else 0.0,
+                "geometry_loss": float(last_metrics["geometry_loss"]) if last_metrics else 0.0,
+                "attack_loss": float(last_metrics["attack_loss"]) if last_metrics else 0.0,
+                "pressure_loss": float(last_metrics["pressure_loss"]) if last_metrics else 0.0,
                 "window_samples": int(window_samples),
                 "window_files": len(files),
                 "train_samples_per_cycle": int(sample_target),

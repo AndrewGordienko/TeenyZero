@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeenyZero | AlphaFold Pretraining</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='common/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='alphafold_status/status.css') }}">
+</head>
+<body>
+    <main class="shell">
+        <header class="page-hero">
+            <div class="hero-copy">
+                <div class="eyebrow">TeenyZero</div>
+                <h1>AlphaFold Geometry Training</h1>
+                <p class="subtitle">Monitor relational board pretraining, random-position coverage, geometry losses, and checkpoint throughput.</p>
+            </div>
+            <div class="hero-actions">
+                <a class="action-button action-button--ghost" href="/training">AlphaZero Trainer</a>
+                <a class="home-link" href="/">Back to Hub</a>
+            </div>
+        </header>
+
+        <section id="summary" class="metric-strip summary-strip"></section>
+
+        <section id="progress" class="progress-grid"></section>
+
+        <section class="insight-grid">
+            <section class="panel">
+                <h2 class="section-title">Run Snapshot</h2>
+                <div id="stage-cards" class="info-grid"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Training Throughput</h2>
+                <div id="throughput-cards" class="info-grid"></div>
+            </section>
+        </section>
+
+        <section class="chart-grid">
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Geometry Loss Curves</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--blue"></i>Total</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--ink"></i>Attack</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--green"></i>Pressure</span>
+                    </div>
+                </div>
+                <svg id="loss-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Epoch Throughput</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--blue"></i>Samples / Sec</span>
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--gold"></i>Batches / Sec</span>
+                    </div>
+                </div>
+                <svg id="throughput-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Epoch Duration</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--rose"></i>Duration</span>
+                    </div>
+                </div>
+                <svg id="duration-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+            <section class="panel chart-card">
+                <div class="chart-head">
+                    <h2 class="section-title">Average Batch Time</h2>
+                    <div class="legend">
+                        <span class="legend-item"><i class="legend-swatch legend-swatch--ink"></i>Latency</span>
+                    </div>
+                </div>
+                <svg id="batch-chart" class="chart" viewBox="0 0 520 180" preserveAspectRatio="none"></svg>
+            </section>
+        </section>
+
+        <section class="inspection-grid">
+            <section class="panel">
+                <div class="chart-head">
+                    <h2 class="section-title">Sample Inspector</h2>
+                    <div class="hero-actions">
+                        <select id="sample-source" class="sample-source">
+                            <option value="replay">Replay Sample</option>
+                            <option value="random">Random Board</option>
+                        </select>
+                        <button id="refresh-sample" class="action-button action-button--ghost" type="button">Refresh Sample</button>
+                    </div>
+                </div>
+                <div id="sample-meta" class="sample-meta"></div>
+                <div id="sample-board" class="sample-board"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Target Geometry</h2>
+                <div id="target-maps" class="heatmap-groups"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Predicted Geometry</h2>
+                <div id="prediction-maps" class="heatmap-groups"></div>
+            </section>
+            <section class="panel">
+                <h2 class="section-title">Top Learned Connections</h2>
+                <div id="connections" class="connections-list"></div>
+            </section>
+        </section>
+
+        <section class="panel">
+            <h2 class="section-title">Operational Overview</h2>
+            <div id="details" class="detail-sections"></div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='alphafold_status/status.js') }}"></script>
+</body>
+</html>

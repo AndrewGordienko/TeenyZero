@@ -5,7 +5,7 @@ from collections import deque
 import torch
 import numpy as np
 
-from teenyzero.alphazero.checkpoints import build_model, load_checkpoint
+from teenyzero.alphazero.checkpoints import build_model, load_checkpoint, model_architecture_name
 from teenyzero.alphazero.runtime import get_runtime_profile
 
 
@@ -25,7 +25,7 @@ def inference_worker(model_path, device, task_queue, response_queues, shared_sta
     Batched response format:
         (task_id, logits_batch, values_batch, True)
     """
-    print(f"[Inference] Initializing AlphaNet on {device}...")
+    print(f"[Inference] Initializing {model_architecture_name()} on {device}...")
     torch.set_num_threads(1)
     if hasattr(torch, "set_num_interop_threads"):
         torch.set_num_interop_threads(1)
