@@ -31,6 +31,16 @@ GEOMETRY_TARGET_NAMES = (
     "enemy_king_pressure",
 )
 PIECE_SYMBOLS = ("P", "N", "B", "R", "Q", "K", "p", "n", "b", "r", "q", "k")
+ATTACKER_WEIGHTS = {
+    chess.PAWN: 1.0,
+    chess.KNIGHT: 1.45,
+    chess.BISHOP: 1.45,
+    chess.ROOK: 1.85,
+    chess.QUEEN: 2.5,
+    chess.KING: 0.5,
+}
+ATTACK_INTENSITY_NORMALIZER = 8.0
+KING_PRESSURE_NORMALIZER = 5.0
 
 
 def orient_square(square: int, perspective: bool) -> int:
@@ -97,9 +107,11 @@ def _empty_map() -> np.ndarray:
 
 def _fill_attack_map(target: np.ndarray, board: chess.Board, color: bool, perspective: bool):
     for square in chess.SQUARES:
-        if board.is_attacked_by(color, square):
-            row, col = _oriented_row_col(square, perspective)
-            target[row, col] = 1.0
+        intensity = _attack_intensity(board, color, square)
+        if intensity <= 0.0:
+            continue
+        row, col = _oriented_row_col(square, perspective)
+        target[row, col] = intensity
 
 
 def _fill_king_zone_pressure(target: np.ndarray, board: chess.Board, attacker_color: bool, perspective: bool):
@@ -118,11 +130,11 @@ def _fill_king_zone_pressure(target: np.ndarray, board: chess.Board, attacker_co
                 zone_squares.add(chess.square(file, rank))
 
     for square in zone_squares:
-        attackers = len(board.attackers(attacker_color, square))
-        if attackers <= 0:
+        pressure = _attack_intensity(board, attacker_color, square, normalizer=KING_PRESSURE_NORMALIZER)
+        if pressure <= 0.0:
             continue
         row, col = _oriented_row_col(square, perspective)
-        target[row, col] = min(attackers, 4) / 4.0
+        target[row, col] = pressure
 
 
 def build_square_targets(board: chess.Board) -> dict[str, np.ndarray]:
@@ -142,6 +154,25 @@ def build_square_targets(board: chess.Board) -> dict[str, np.ndarray]:
         "enemy_attack": enemy_attack,
         "friendly_king_pressure": friendly_king_pressure,
         "enemy_king_pressure": enemy_king_pressure,
+    }
+
+
+def build_square_targets_absolute(board: chess.Board) -> dict[str, np.ndarray]:
+    white_attack = _empty_map()
+    black_attack = _empty_map()
+    white_king_pressure = _empty_map()
+    black_king_pressure = _empty_map()
+
+    _fill_attack_map(white_attack, board, chess.WHITE, chess.WHITE)
+    _fill_attack_map(black_attack, board, chess.BLACK, chess.WHITE)
+    _fill_king_zone_pressure(white_king_pressure, board, chess.WHITE, chess.WHITE)
+    _fill_king_zone_pressure(black_king_pressure, board, chess.BLACK, chess.WHITE)
+
+    return {
+        "white_attack": white_attack,
+        "black_attack": black_attack,
+        "white_king_pressure": white_king_pressure,
+        "black_king_pressure": black_king_pressure,
     }
 
 
@@ -182,6 +213,10 @@ def build_square_target_tensor_from_state(state) -> np.ndarray:
 
 def state_to_piece_grid(state) -> list[list[str]]:
     board = board_from_encoded_state(state)
+    return piece_grid_from_board(board)
+
+
+def piece_grid_from_board(board: chess.Board) -> list[list[str]]:
     grid = [["" for _ in range(8)] for _ in range(8)]
     for rank in range(8):
         for file in range(8):
@@ -190,6 +225,13 @@ def state_to_piece_grid(state) -> list[list[str]]:
                 continue
             grid[rank][file] = piece.symbol()
     return grid
+
+
+def oriented_map_to_absolute(grid, perspective: bool) -> np.ndarray:
+    array = np.asarray(grid, dtype=np.float32)
+    if perspective == chess.WHITE:
+        return np.array(array, dtype=np.float32, copy=True)
+    return np.flipud(array).astype(np.float32, copy=False)
 
 
 def _fill_piece_planes(planes: np.ndarray, offset: int, board: chess.Board, perspective: bool):
@@ -259,3 +301,15 @@ def _piece_type_for_plane(plane_idx: int) -> int:
         chess.QUEEN,
         chess.KING,
     )[piece_offset]
+
+
+def _attack_intensity(board: chess.Board, color: bool, square: int, normalizer: float = ATTACK_INTENSITY_NORMALIZER) -> float:
+    pressure = 0.0
+    for attacker_square in board.attackers(color, square):
+        piece = board.piece_at(attacker_square)
+        if piece is None:
+            continue
+        pressure += ATTACKER_WEIGHTS.get(piece.piece_type, 1.0)
+    if pressure <= 0.0:
+        return 0.0
+    return min(pressure / max(1e-6, float(normalizer)), 1.0)

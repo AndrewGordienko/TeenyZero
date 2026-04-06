@@ -84,28 +84,32 @@
                     <h2 class="section-title">Sample Inspector</h2>
                     <div class="hero-actions">
                         <select id="sample-source" class="sample-source">
-                            <option value="replay">Replay Sample</option>
-                            <option value="random">Random Board</option>
+                            <option value="random" selected>Random Training Sample</option>
+                            <option value="replay">Replay Fine-Tune Sample</option>
                         </select>
                         <button id="refresh-sample" class="action-button action-button--ghost" type="button">Refresh Sample</button>
                     </div>
                 </div>
-                <div id="sample-meta" class="sample-meta"></div>
-                <div id="sample-board" class="sample-board"></div>
+                <div id="sample-summary" class="sample-summary"></div>
+                <div id="sample-guide" class="sample-guide"></div>
+                <div class="sample-board-wrap">
+                    <div id="sample-board-label" class="sample-board-label">White at bottom</div>
+                    <div id="sample-board" class="sample-board"></div>
+                </div>
             </section>
             <section class="panel">
-                <h2 class="section-title">Target Geometry</h2>
-                <div id="target-maps" class="heatmap-groups"></div>
+                <h2 class="section-title">Relation Lens</h2>
+                <p class="section-note">Hover any square to see which other squares the model considers most relevant when building that square's representation.</p>
+                <div id="connection-lens" class="connection-lens"></div>
             </section>
-            <section class="panel">
-                <h2 class="section-title">Predicted Geometry</h2>
-                <div id="prediction-maps" class="heatmap-groups"></div>
-            </section>
-            <section class="panel">
-                <h2 class="section-title">Top Learned Connections</h2>
-                <div id="connections" class="connections-list"></div>
+            <section class="panel inspection-wide">
+                <h2 class="section-title">Geometry Compare</h2>
+                <p class="section-note">Target geometry is the rule-derived label from the board itself. Predicted geometry is the model's estimate of that same map. Compare each pair side by side.</p>
+                <div id="geometry-compare" class="compare-grid"></div>
             </section>
         </section>
+
+        <div id="sample-popover" class="sample-popover"></div>
 
         <section class="panel">
             <h2 class="section-title">Operational Overview</h2>

@@ -10,7 +10,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from teenyzero.alphafold.features import build_square_target_tensor, encode_board_state
+from teenyzero.alphafold.features import (
+    GEOMETRY_TARGET_NAMES,
+    build_square_target_tensor,
+    encode_board_state,
+)
+from teenyzero.alphazero.config import INPUT_PLANES
 from teenyzero.alphazero.checkpoints import load_checkpoint, save_checkpoint
 from teenyzero.alphazero.runtime import get_runtime_profile
 
@@ -19,21 +24,48 @@ PROFILE = get_runtime_profile()
 
 
 class RandomBoardPositionDataset(Dataset):
-    def __init__(self, sample_count: int, min_plies: int = 6, max_plies: int = 80, rng_seed: int | None = None):
+    def __init__(
+        self,
+        sample_count: int,
+        min_plies: int = 6,
+        max_plies: int = 80,
+        rng_seed: int | None = None,
+        chunk_size: int = 64,
+    ):
         self.sample_count = max(1, int(sample_count))
         self.min_plies = max(0, int(min_plies))
         self.max_plies = max(self.min_plies, int(max_plies))
         self.rng_seed = int(time.time() * 1000) if rng_seed is None else int(rng_seed)
+        self.chunk_size = max(1, int(chunk_size))
+        self._cached_chunk_start = -1
+        self._cached_states = None
+        self._cached_targets = None
 
     def __len__(self) -> int:
         return self.sample_count
 
     def __getitem__(self, idx):
-        rng = np.random.default_rng(self.rng_seed + int(idx))
-        board = self._sample_board(rng)
-        state = encode_board_state(board)
-        targets = build_square_target_tensor(board)
-        return torch.from_numpy(state).float(), torch.from_numpy(targets).float()
+        index = int(idx)
+        chunk_start = (index // self.chunk_size) * self.chunk_size
+        if chunk_start != self._cached_chunk_start:
+            self._build_chunk(chunk_start)
+        offset = index - chunk_start
+        return self._cached_states[offset], self._cached_targets[offset]
+
+    def _build_chunk(self, chunk_start: int):
+        local_count = min(self.chunk_size, self.sample_count - chunk_start)
+        state_batch = np.empty((local_count, INPUT_PLANES, 8, 8), dtype=np.float32)
+        target_batch = np.empty((local_count, len(GEOMETRY_TARGET_NAMES), 8, 8), dtype=np.float32)
+        chunk_rng = np.random.default_rng(self.rng_seed + (chunk_start * 1_000_003))
+
+        for local_idx in range(local_count):
+            board = self._sample_board(chunk_rng)
+            state_batch[local_idx] = encode_board_state(board)
+            target_batch[local_idx] = build_square_target_tensor(board)
+
+        self._cached_chunk_start = chunk_start
+        self._cached_states = torch.from_numpy(state_batch)
+        self._cached_targets = torch.from_numpy(target_batch)
 
     def _sample_board(self, rng: np.random.Generator) -> chess.Board:
         for _ in range(12):
@@ -99,7 +131,7 @@ class AlphaFoldPretrainer:
         self.use_compile = bool(PROFILE.train_compile if use_compile is None else use_compile)
         self.grad_accum_steps = max(1, int(grad_accum_steps))
         self.max_grad_norm = float(max_grad_norm)
-        self.use_channels_last = device == "cuda"
+        self.use_channels_last = device in {"cuda", "mps"}
         self.use_autocast = self.device == "cuda" and self.precision in {"fp16", "bf16"}
         self.autocast_dtype = torch.bfloat16 if self.precision == "bf16" else torch.float16
         scaler_enabled = self.device == "cuda" and self.precision == "fp16"

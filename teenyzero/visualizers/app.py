@@ -586,9 +586,28 @@ def alphafold_sample():
         return jsonify({"error": "No AlphaFold sample source is available."}), 404
 
     model = _load_alphafold_inspector_model()
-    payload = sample_geometry_payload(sample["state"], sample["source"], model=model, device="cpu")
+    warning = None
+    try:
+        payload = sample_geometry_payload(
+            sample["state"],
+            sample["source"],
+            model=model,
+            device="cpu",
+            reference_board=sample.get("board"),
+        )
+    except Exception as exc:
+        payload = sample_geometry_payload(
+            sample["state"],
+            sample["source"],
+            model=None,
+            device="cpu",
+            reference_board=sample.get("board"),
+        )
+        warning = f"Inspector model unavailable for this runtime: {exc}"
     checkpoint_info = _select_alphafold_inspector_checkpoint()
     payload["checkpoint_path"] = str(checkpoint_info[0]) if checkpoint_info is not None else None
+    if warning:
+        payload["warning"] = warning
     return jsonify(payload)
 
 

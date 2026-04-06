@@ -5,21 +5,26 @@ function prettyStatus(value) {
         .join(" ");
 }
 
-const pieceMap = {
-    P: "♙",
-    N: "♘",
-    B: "♗",
-    R: "♖",
-    Q: "♕",
-    K: "♔",
-    p: "♟",
-    n: "♞",
-    b: "♝",
-    r: "♜",
-    q: "♛",
-    k: "♚",
+const HEATMAP_INFO = {
+    white_attack: {
+        title: "White Control / Attack",
+        note: "Squares white pieces attack or defend. This is board control, not move preference.",
+    },
+    black_attack: {
+        title: "Black Control / Attack",
+        note: "Squares black pieces attack or defend. Friendly occupied squares can still light up because they are defended.",
+    },
+    white_king_pressure: {
+        title: "White King Pressure",
+        note: "White pressure on the black king zone.",
+    },
+    black_king_pressure: {
+        title: "Black King Pressure",
+        note: "Black pressure on the white king zone.",
+    },
 };
 let sampleRefreshNonce = Date.now();
+let activeConnectionSquareIndex = null;
 
 function setHtml(id, html) {
     const node = document.getElementById(id);
@@ -31,6 +36,11 @@ function setHtml(id, html) {
 function fmtNumber(value, digits = 1) {
     const num = Number(value || 0);
     return Number.isFinite(num) ? num.toFixed(digits) : "0.0";
+}
+
+function fmtMaybeNumber(value, digits = 3) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(digits) : "n/a";
 }
 
 function fmtLoss(value) {
@@ -64,6 +74,119 @@ function stageElapsed(state) {
     const heartbeat = Number(state.heartbeat_at || 0);
     if (!started || !heartbeat) return 0;
     return Math.max(0, heartbeat - started);
+}
+
+function squareName(squareIndex) {
+    const index = Math.max(0, Math.min(63, Number(squareIndex || 0)));
+    const file = "abcdefgh"[index % 8] || "a";
+    const rank = Math.floor(index / 8) + 1;
+    return `${file}${rank}`;
+}
+
+function pieceAsset(symbol) {
+    if (!symbol) return "";
+    const color = symbol === symbol.toUpperCase() ? "w" : "b";
+    return `/static/assets/pieces/${color}${symbol.toLowerCase()}.png`;
+}
+
+function pieceName(symbol) {
+    if (!symbol) return "Empty square";
+    const color = symbol === symbol.toUpperCase() ? "White" : "Black";
+    const nameMap = {
+        p: "Pawn",
+        n: "Knight",
+        b: "Bishop",
+        r: "Rook",
+        q: "Queen",
+        k: "King",
+    };
+    return `${color} ${nameMap[symbol.toLowerCase()] || "Piece"}`;
+}
+
+function mapInfoForSample(sample) {
+    const info = sample?.map_info;
+    if (info && typeof info === "object" && Object.keys(info).length) {
+        return info;
+    }
+    return HEATMAP_INFO;
+}
+
+function mapKeysForSample(sample) {
+    return Object.keys(mapInfoForSample(sample));
+}
+
+function squareMetrics(sample, squareIndex) {
+    const index = Math.max(0, Math.min(63, Number(squareIndex || 0)));
+    const row = Math.floor(index / 8);
+    const col = index % 8;
+    const pieceGrid = Array.isArray(sample?.piece_grid) ? sample.piece_grid : [];
+    const piece = Array.isArray(pieceGrid[row]) ? String(pieceGrid[row][col] || "") : "";
+    const mapKeys = mapKeysForSample(sample);
+    return {
+        square: squareName(index),
+        piece,
+        targetValues: Object.fromEntries(mapKeys.map((name) => [
+            name,
+            Number(sample?.targets?.[name]?.[row]?.[col] || 0),
+        ])),
+        predictionValues: Object.fromEntries(mapKeys.map((name) => [
+            name,
+            sample?.predictions?.[name]?.[row]?.[col] ?? Number.NaN,
+        ])),
+    };
+}
+
+function gridMeanAbsError(targetGrid, predictionGrid) {
+    let total = 0;
+    let count = 0;
+    for (let row = 0; row < 8; row += 1) {
+        for (let col = 0; col < 8; col += 1) {
+            const target = Number(targetGrid?.[row]?.[col] || 0);
+            const prediction = Number(predictionGrid?.[row]?.[col] || 0);
+            total += Math.abs(target - prediction);
+            count += 1;
+        }
+    }
+    return count > 0 ? total / count : 0;
+}
+
+function strongestAttentionSource(attentionMatrix) {
+    if (!Array.isArray(attentionMatrix) || attentionMatrix.length !== 64) return null;
+    let bestSource = null;
+    let bestWeight = -1;
+    for (let source = 0; source < 64; source += 1) {
+        const row = Array.isArray(attentionMatrix[source]) ? attentionMatrix[source] : [];
+        for (let target = 0; target < 64; target += 1) {
+            if (source === target) continue;
+            const weight = Number(row[target] || 0);
+            if (weight > bestWeight) {
+                bestWeight = weight;
+                bestSource = source;
+            }
+        }
+    }
+    return bestSource;
+}
+
+function activeSquareForSample(sample) {
+    if (Number.isInteger(activeConnectionSquareIndex)) return activeConnectionSquareIndex;
+    return strongestAttentionSource(sample?.attention_matrix);
+}
+
+function topConnectionsForSquare(sample, squareIndex, limit = 6) {
+    const matrix = sample?.attention_matrix;
+    if (!Array.isArray(matrix) || !Array.isArray(matrix[squareIndex])) return [];
+    const ranked = [];
+    for (let target = 0; target < 64; target += 1) {
+        if (target === squareIndex) continue;
+        ranked.push({
+            squareIndex: target,
+            square: squareName(target),
+            weight: Number(matrix[squareIndex][target] || 0),
+        });
+    }
+    ranked.sort((a, b) => b.weight - a.weight);
+    return ranked.slice(0, limit);
 }
 
 function buildLiveHistory(state, history) {
@@ -155,7 +278,7 @@ function render(state) {
     const stageInfo = [
         ["Run Status", prettyStatus(state.status), `${fmtDuration(stageElapsed(state))} since the current run began`],
         ["Geometry Loss", fmtLoss(state.running_loss || state.last_loss), `${fmtLoss(state.running_attack_loss || state.last_attack_loss)} attack and ${fmtLoss(state.running_pressure_loss || state.last_pressure_loss)} pressure`],
-        ["Position Sampler", `${fmtInt(minPlies)}-${fmtInt(maxPlies)} plies`, `${fmtInt(positionsPerEpoch)} boards per epoch with seed ${fmtInt(state.seed)}`],
+        ["Position Sampler", `${fmtInt(minPlies)}-${fmtInt(maxPlies)} plies`, state.sampling_note || `${fmtInt(positionsPerEpoch)} boards per epoch with seed ${fmtInt(state.seed)}`],
     ];
 
     stageCards.innerHTML = stageInfo.map(([label, value, note]) => `
@@ -196,7 +319,9 @@ function render(state) {
         [
             "Geometry Targets",
             [
+                ["Data Source", prettyStatus(state.data_source || "weighted_random_legal_rollouts")],
                 ["Objective", "Attack maps + king pressure"],
+                ["Target Style", prettyStatus(state.target_style || "normalized_attack_intensity_v2")],
                 ["Attack Loss", fmtLoss(state.running_attack_loss || state.last_attack_loss)],
                 ["Pressure Loss", fmtLoss(state.running_pressure_loss || state.last_pressure_loss)],
                 ["Positions / Epoch", fmtInt(state.positions_per_epoch)],
@@ -213,6 +338,8 @@ function render(state) {
                 ["Epoch", `${fmtInt(state.last_epoch)} / ${fmtInt(state.epochs)}`],
                 ["Completed Batches", `${fmtInt(state.completed_batches)} / ${fmtInt(state.total_batches)}`],
                 ["Runtime Profile", state.runtime_profile || "n/a"],
+                ["Chunk Cache", fmtInt(state.cache_chunk_size || 0)],
+                ["Prefetch", fmtInt(state.prefetch_factor || 0)],
             ],
         ],
     ];
@@ -244,11 +371,13 @@ function renderLoadError(message) {
     setHtml("details", "");
     setHtml("stage-cards", "");
     setHtml("throughput-cards", "");
-    setHtml("sample-meta", "");
+    setHtml("sample-summary", "");
+    setHtml("sample-guide", "");
+    setHtml("sample-board-label", "White at bottom");
     setHtml("sample-board", "");
-    setHtml("target-maps", "");
-    setHtml("prediction-maps", "");
-    setHtml("connections", "");
+    hideSamplePopover();
+    setHtml("geometry-compare", "");
+    setHtml("connection-lens", "");
     for (const id of ["loss-chart", "throughput-chart", "duration-chart", "batch-chart"]) {
         const svg = document.getElementById(id);
         if (svg) svg.innerHTML = "";
@@ -392,29 +521,26 @@ function renderHistory(state, history) {
     `);
 }
 
-function renderBoard(fen) {
-    const boardPart = (fen || "").split(" ")[0] || "8/8/8/8/8/8/8/8";
-    const rows = boardPart.split("/");
+function renderBoard(pieceGrid, focusSquareIndex = null) {
+    const grid = Array.isArray(pieceGrid) ? pieceGrid : [];
     const squares = [];
-    rows.forEach((row, rankIndex) => {
-        let fileIndex = 0;
-        for (const char of row) {
-            if (Number.isInteger(Number(char)) && char !== "0") {
-                for (let i = 0; i < Number(char); i += 1) {
-                    const isLight = (rankIndex + fileIndex) % 2 === 0;
-                    squares.push(`<div class="sample-square ${isLight ? "light" : "dark"}"></div>`);
-                    fileIndex += 1;
-                }
-            } else {
-                const isLight = (rankIndex + fileIndex) % 2 === 0;
-                const pieceClass = char === char.toUpperCase() ? "white" : "black";
-                squares.push(
-                    `<div class="sample-square ${isLight ? "light" : "dark"}"><span class="piece ${pieceClass}">${pieceMap[char] || ""}</span></div>`,
-                );
-                fileIndex += 1;
-            }
+
+    for (let displayRow = 0; displayRow < 8; displayRow += 1) {
+        const row = 7 - displayRow;
+        const rowData = Array.isArray(grid[row]) ? grid[row] : [];
+        for (let col = 0; col < 8; col += 1) {
+            const squareIndex = row * 8 + col;
+            const square = squareName(squareIndex);
+            const piece = String(rowData[col] || "");
+            const isLight = (displayRow + col) % 2 === 0;
+            squares.push(`
+                <div class="sample-square ${isLight ? "light" : "dark"} ${squareIndex === focusSquareIndex ? "is-focus" : ""}" data-square-index="${squareIndex}" title="${square}">
+                    ${piece ? `<img class="piece-sprite" src="${pieceAsset(piece)}" alt="${pieceName(piece)}">` : ""}
+                </div>
+            `);
         }
-    });
+    }
+
     return squares.join("");
 }
 
@@ -424,73 +550,307 @@ function heatColor(value, hue = 220) {
     return `hsla(${hue}, 68%, 48%, ${alpha})`;
 }
 
-function renderHeatmapMaps(target, maps, hue) {
-    if (!maps || typeof maps !== "object") {
-        target.innerHTML = '<div class="info-note">No map data available.</div>';
-        return;
-    }
-    target.innerHTML = Object.entries(maps).map(([name, grid]) => `
-        <section class="heatmap-card">
-            <div class="heatmap-title">${name.replaceAll("_", " ")}</div>
-            <div class="heatmap-grid">
-                ${grid.flatMap((row) => row.map((value) => `
-                    <div class="heatmap-cell" style="background:${heatColor(value, hue)}" title="${fmtNumber(value, 3)}"></div>
-                `)).join("")}
-            </div>
-        </section>
-    `).join("");
+function mapHue(name) {
+    return String(name).includes("pressure") ? 24 : 216;
 }
 
-function renderConnections(target, connections) {
-    if (!Array.isArray(connections) || !connections.length) {
-        target.innerHTML = '<div class="info-note">No learned connection data is available yet.</div>';
-        return;
+function renderHeatGrid(grid, name, kind) {
+    const cells = [];
+    for (let displayRow = 0; displayRow < 8; displayRow += 1) {
+        const row = 7 - displayRow;
+        const rowData = Array.isArray(grid?.[row]) ? grid[row] : [];
+        for (let col = 0; col < 8; col += 1) {
+            const squareIndex = row * 8 + col;
+            const value = Number(rowData[col] || 0);
+            cells.push(`
+                <div
+                    class="heatmap-cell"
+                    data-square-index="${squareIndex}"
+                    data-map-name="${name}"
+                    data-map-kind="${kind}"
+                    style="background:${heatColor(value, mapHue(name))}"
+                    title="${squareName(squareIndex)}: ${fmtNumber(value, 3)}"
+                ></div>
+            `);
+        }
     }
-    target.innerHTML = connections.map((item) => `
-        <div class="connection-row">
-            <div class="connection-label mono">${item.from} → ${item.to}</div>
-            <div class="connection-weight">${fmtNumber(item.weight, 3)}</div>
+    return `<div class="heatmap-grid">${cells.join("")}</div>`;
+}
+
+function renderSampleSummary(sample) {
+    const chips = [
+        ["Sample", sample.source === "random" ? "Random training position" : "Replay fine-tune position"],
+        ["View", sample.board_view_label || "Board view"],
+        ["Inspector", sample.predictions ? "Target + prediction loaded" : "Targets only"],
+    ];
+    if (sample.warning) {
+        chips.push(["Warning", sample.warning]);
+    }
+    return chips.map(([label, value]) => `
+        <div class="sample-chip">
+            <div class="sample-chip-label">${label}</div>
+            <div class="sample-chip-value">${value}</div>
         </div>
     `).join("");
 }
 
+function renderSampleGuide(sample) {
+    return `
+        <div class="sample-guide-label">What You're Looking At</div>
+        <div class="sample-guide-grid">
+            <div class="sample-guide-card">
+                <div class="sample-guide-title">Attack / Control</div>
+                <div class="sample-guide-note">Attack here means squares a side currently attacks or defends with its existing pieces. It is not where that side wants to move next. A side can "attack itself" in the sense that its own pieces are defended.</div>
+            </div>
+            <div class="sample-guide-card">
+                <div class="sample-guide-title">Target Vs Prediction</div>
+                <div class="sample-guide-note">Target geometry is computed directly from chess rules on the sampled board. Predicted geometry is the model's estimate of those same maps before it sees the label.</div>
+            </div>
+            <div class="sample-guide-card">
+                <div class="sample-guide-title">Connections</div>
+                <div class="sample-guide-note">Connections are internal square-to-square attention weights. They are not legal moves or policy scores. They show which other squares the model consults when representing one focused square.</div>
+            </div>
+        </div>
+        ${sample?.board_view_note ? `<div class="sample-guide-note" style="margin-top:12px;">${sample.board_view_note}</div>` : ""}
+    `;
+}
+
+function renderGeometryCompare(sample) {
+    const target = document.getElementById("geometry-compare");
+    if (!target) return;
+    if (!sample?.targets) {
+        target.innerHTML = '<div class="info-note">No geometry maps are available.</div>';
+        return;
+    }
+    const mapInfo = mapInfoForSample(sample);
+    const mapKeys = mapKeysForSample(sample);
+    target.innerHTML = mapKeys.map((name) => {
+        const meta = mapInfo[name] || { title: name, note: "" };
+        const targetGrid = sample.targets?.[name];
+        const predictionGrid = sample.predictions?.[name];
+        const mae = predictionGrid ? gridMeanAbsError(targetGrid, predictionGrid) : null;
+        return `
+            <section class="compare-card">
+                <div class="compare-title">${meta.title}</div>
+                <div class="compare-note">${meta.note}</div>
+                <div class="compare-meta">
+                    <span>${predictionGrid ? `Mean abs error: ${fmtNumber(mae, 3)}` : "Prediction unavailable"}</span>
+                </div>
+                <div class="compare-panels">
+                    <div>
+                        <div class="compare-panel-label">Target</div>
+                        ${renderHeatGrid(targetGrid, name, "target")}
+                    </div>
+                    <div>
+                        <div class="compare-panel-label">Prediction</div>
+                        ${predictionGrid ? renderHeatGrid(predictionGrid, name, "prediction") : '<div class="info-note">Prediction unavailable for this sample.</div>'}
+                    </div>
+                </div>
+            </section>
+        `;
+    }).join("");
+}
+
+function renderConnectionBoard(sample, sourceSquareIndex) {
+    const matrix = sample?.attention_matrix;
+    const pieceGrid = Array.isArray(sample?.piece_grid) ? sample.piece_grid : [];
+    const weights = Array.isArray(matrix?.[sourceSquareIndex]) ? matrix[sourceSquareIndex] : [];
+    const cells = [];
+
+    for (let displayRow = 0; displayRow < 8; displayRow += 1) {
+        const row = 7 - displayRow;
+        const rowData = Array.isArray(pieceGrid[row]) ? pieceGrid[row] : [];
+        for (let col = 0; col < 8; col += 1) {
+            const squareIndex = row * 8 + col;
+            const piece = String(rowData[col] || "");
+            const isLight = (displayRow + col) % 2 === 0;
+            const weight = Number(weights[squareIndex] || 0);
+            cells.push(`
+                <div
+                    class="connection-board-square ${isLight ? "light" : "dark"} ${squareIndex === sourceSquareIndex ? "is-focus" : ""}"
+                    data-square-index="${squareIndex}"
+                    style="--connection-color:${heatColor(weight, 336)}"
+                    title="${squareName(squareIndex)}: ${fmtNumber(weight, 3)}"
+                >
+                    ${piece ? `<img class="piece-sprite" src="${pieceAsset(piece)}" alt="${pieceName(piece)}">` : ""}
+                </div>
+            `);
+        }
+    }
+
+    return `<div class="connection-board">${cells.join("")}</div>`;
+}
+
+function renderConnectionLens(sample, sourceSquareIndex = null) {
+    const node = document.getElementById("connection-lens");
+    if (!node) return;
+    if (!sample?.attention_matrix) {
+        node.innerHTML = '<div class="info-note">Connection weights are only available when the inspector model is loaded successfully.</div>';
+        return;
+    }
+    const focusSquare = Number.isInteger(sourceSquareIndex) ? sourceSquareIndex : activeSquareForSample(sample);
+    if (!Number.isInteger(focusSquare)) {
+        node.innerHTML = '<div class="info-note">Hover a square to inspect its square-to-square attention pattern.</div>';
+        return;
+    }
+    const related = topConnectionsForSquare(sample, focusSquare, 6);
+    node.innerHTML = `
+        <div class="connection-meta">
+            <div class="connection-headline">Focused square: <span class="mono">${squareName(focusSquare)}</span></div>
+            <div class="connection-note">Colored squares show where the model places the most attention when building the representation for <span class="mono">${squareName(focusSquare)}</span>. Higher intensity means a stronger internal relation, not a stronger move.</div>
+        </div>
+        ${renderConnectionBoard(sample, focusSquare)}
+        <div class="connection-list">
+            ${related.map((item, index) => `
+                <div class="connection-item">
+                    <div><span class="connection-item-label">#${index + 1}</span> <span class="mono">${squareName(focusSquare)} -> ${item.square}</span></div>
+                    <div>${fmtNumber(item.weight, 3)}</div>
+                </div>
+            `).join("")}
+        </div>
+    `;
+}
+
+function hideSamplePopover() {
+    const node = document.getElementById("sample-popover");
+    if (!node) return;
+    node.innerHTML = "";
+    node.classList.remove("is-visible");
+}
+
+function positionSamplePopover(event) {
+    const node = document.getElementById("sample-popover");
+    if (!node) return;
+    const pad = 16;
+    const width = Math.min(320, window.innerWidth - (pad * 2));
+    const left = Math.min(window.innerWidth - width - pad, event.clientX + 18);
+    const top = Math.min(window.innerHeight - node.offsetHeight - pad, event.clientY + 18);
+    node.style.left = `${Math.max(pad, left)}px`;
+    node.style.top = `${Math.max(pad, top)}px`;
+}
+
+function showSamplePopover(sample, focus, event) {
+    const node = document.getElementById("sample-popover");
+    if (!node || !sample || !Number.isInteger(Number(focus?.squareIndex))) return;
+    const info = squareMetrics(sample, focus.squareIndex);
+    const mapInfo = mapInfoForSample(sample);
+    const mapKeys = mapKeysForSample(sample);
+    const focusMeta = focus.mapName ? mapInfo[focus.mapName] : null;
+    const focusedName = focus.mapName || mapKeys[0];
+    const targetValue = Number(info.targetValues[focusedName] || 0);
+    const predictionValue = Number(info.predictionValues[focusedName]);
+    const predictionAvailable = Number.isFinite(predictionValue);
+    node.innerHTML = `
+        <div class="sample-popover-title mono">${info.square}</div>
+        <div class="sample-popover-subtitle">${pieceName(info.piece)}</div>
+        <div class="sample-popover-note">
+            ${focusMeta
+                ? `${focus.kind === "prediction" ? "Prediction" : "Target"} cell for ${focusMeta.title}.`
+                : "Board square hover. Values below compare rule labels with model predictions for this square."}
+        </div>
+        <div class="sample-popover-grid">
+            <div class="sample-popover-group">
+                <div class="sample-popover-group-title">Focused Map</div>
+                <div class="sample-popover-row">
+                    <div class="sample-popover-key">Target</div>
+                    <div class="sample-popover-value">${fmtNumber(targetValue, 3)}</div>
+                </div>
+                <div class="sample-popover-row">
+                    <div class="sample-popover-key">Prediction</div>
+                    <div class="sample-popover-value">${fmtMaybeNumber(predictionValue, 3)}</div>
+                </div>
+                <div class="sample-popover-row">
+                    <div class="sample-popover-key">Abs error</div>
+                    <div class="sample-popover-value">${predictionAvailable ? fmtNumber(Math.abs(targetValue - predictionValue), 3) : "n/a"}</div>
+                </div>
+            </div>
+            <div class="sample-popover-group">
+                <div class="sample-popover-group-title">All Maps</div>
+                ${mapKeys.map((name) => `
+                    <div class="sample-popover-row">
+                        <div class="sample-popover-key">${mapInfo[name]?.title || name}</div>
+                        <div class="sample-popover-value">${fmtNumber(info.targetValues[name], 3)} / ${fmtMaybeNumber(info.predictionValues[name], 3)}</div>
+                    </div>
+                `).join("")}
+            </div>
+        </div>
+    `;
+    node.classList.add("is-visible");
+    positionSamplePopover(event);
+}
+
+function highlightFocusedSquare(squareIndex) {
+    document.querySelectorAll(".sample-square.is-focus, .connection-board-square.is-focus").forEach((node) => {
+        node.classList.remove("is-focus");
+    });
+    if (!Number.isInteger(squareIndex)) return;
+    document.querySelectorAll(`[data-square-index="${squareIndex}"].sample-square, [data-square-index="${squareIndex}"].connection-board-square`).forEach((node) => {
+        node.classList.add("is-focus");
+    });
+}
+
+function bindSampleHover(sample) {
+    const bind = (containerId) => {
+        const node = document.getElementById(containerId);
+        if (!node) return;
+        node.onmousemove = (event) => {
+            const target = event.target.closest("[data-square-index]");
+            if (!target || !node.contains(target)) return;
+            const squareIndex = Number(target.dataset.squareIndex || 0);
+            activeConnectionSquareIndex = squareIndex;
+            highlightFocusedSquare(squareIndex);
+            renderConnectionLens(sample, squareIndex);
+            showSamplePopover(sample, {
+                squareIndex,
+                mapName: target.dataset.mapName || "",
+                kind: target.dataset.mapKind || "board",
+            }, event);
+        };
+        node.onmouseleave = () => {
+            hideSamplePopover();
+        };
+    };
+
+    bind("sample-board");
+    bind("geometry-compare");
+}
+
 function renderSample(sample) {
+    activeConnectionSquareIndex = activeSquareForSample(sample);
     if (sample && sample.error) {
-        setHtml("sample-meta", `
+        setHtml("sample-summary", `
             <div class="info-note">
                 Sample inspector unavailable: ${sample.error}
             </div>
         `);
+        setHtml("sample-guide", "");
+        setHtml("sample-board-label", "Sample unavailable");
         setHtml("sample-board", "");
-        setHtml("target-maps", "");
-        setHtml("prediction-maps", "");
-        setHtml("connections", "");
+        hideSamplePopover();
+        setHtml("geometry-compare", "");
+        setHtml("connection-lens", "");
         return;
     }
 
-    if (!sample || !sample.board_fen) {
-        setHtml("sample-meta", '<div class="info-note">No geometry sample is available.</div>');
+    if (!sample || !sample.piece_grid) {
+        setHtml("sample-summary", '<div class="info-note">No geometry sample is available.</div>');
+        setHtml("sample-guide", "");
+        setHtml("sample-board-label", "No sample");
         setHtml("sample-board", "");
-        setHtml("target-maps", "");
-        setHtml("prediction-maps", "");
-        setHtml("connections", "");
+        hideSamplePopover();
+        setHtml("geometry-compare", "");
+        setHtml("connection-lens", "");
         return;
     }
 
-    setHtml("sample-meta", [
-        ["Source", sample.source || "n/a"],
-        ["Checkpoint", sample.checkpoint_path || "targets only"],
-        ["Board", sample.board_fen],
-    ].map(([label, value]) => `
-        <div class="sample-chip">
-            <div class="sample-chip-label">${label}</div>
-            <div class="sample-chip-value mono">${value}</div>
-        </div>
-    `).join(""));
-    setHtml("sample-board", renderBoard(sample.board_fen));
-    renderHeatmapMaps(document.getElementById("target-maps"), sample.targets, 220);
-    renderHeatmapMaps(document.getElementById("prediction-maps"), sample.predictions, 145);
-    renderConnections(document.getElementById("connections"), sample.top_connections);
+    setHtml("sample-summary", renderSampleSummary(sample));
+    setHtml("sample-guide", renderSampleGuide(sample));
+    setHtml("sample-board-label", sample.board_view_label || "White at bottom");
+    setHtml("sample-board", renderBoard(sample.piece_grid, activeConnectionSquareIndex));
+    hideSamplePopover();
+    renderGeometryCompare(sample);
+    renderConnectionLens(sample, activeConnectionSquareIndex);
+    bindSampleHover(sample);
 }
 
 async function fetchJson(url) {
